@@ -48,7 +48,7 @@ module.exports = function logger(req, _, next) {
 
   if (WRITE_L0G) append(JSON.stringify(request));
 
-  console.log(request);
+  console.log(`request: ${JSON.stringify(request)}`);
 
   next();
 };

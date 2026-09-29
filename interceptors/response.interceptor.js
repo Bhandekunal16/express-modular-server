@@ -24,7 +24,7 @@ module.exports = function responseLogger(req, res, next) {
 
     if (WRITE_L0G) append(JSON.stringify(response));
 
-    console.log(response);
+    console.log(`response: ${JSON.stringify(response)}`);
   });
 
   next();
