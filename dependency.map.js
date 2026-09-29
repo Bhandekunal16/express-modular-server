@@ -6,4 +6,5 @@ module.exports = {
   cluster: require("cluster"),
   os: require("os"),
   helmet: require("helmet"),
+  rateLimit: require("express-rate-limit"),
 };

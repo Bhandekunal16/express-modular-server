@@ -3,5 +3,6 @@
   "encryption_Interceptor": true,
   "logger_interceptor": true,
   "clustering": true,
-  "helmet_interceptor": true
+  "helmet_interceptor": true,
+  "rateLimiting" : true
 }

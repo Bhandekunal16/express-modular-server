@@ -1,0 +1,6 @@
+{
+  "windowMs": 900000,
+  "limit": 100,
+  "standardHeaders": true,
+  "legacyHeaders": false
+}
