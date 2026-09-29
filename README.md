@@ -20,6 +20,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 ├── dependency.map.js
 ├── interceptor.map.js
 ├── middleware.loader.js
+├── architecture.md
 ├── package.json
 ├── package-lock.json
 ├── README.md
@@ -30,10 +31,13 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 ├── core/
 │   └── file.functions.js
 ├── interceptors/
-│   ├── error.interceptors.js
-│   ├── encryption.interceptors.js
-│   └── logger.interceptors.js
-└── .gitignore
+│   ├── cluster.interceptor.js
+│   ├── encryption.interceptor.js
+│   ├── error.interceptor.js
+│   └── logger.interceptor.js
+├── logs/
+├── .gitignore
+└── node_modules/
 ```
 
 ## Features
@@ -46,6 +50,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 - Optional error interceptor middleware
 - Optional encryption interceptor middleware
 - Optional request logging middleware
+- Optional worker clustering through Node.js `cluster` module
 - Easy host/port configuration through JSON files
 
 ## Configuration
@@ -72,13 +77,15 @@ The values are used as follows:
 {
   "errorInterceptor": true,
   "encryption_Interceptor": true,
-  "logger_interceptor": true
+  "logger_interceptor": true,
+  "clustering": true
 }
 ```
 
-- `errorInterceptor` — enables the custom error middleware from `interceptors/error.interceptors.js`
-- `encryption_Interceptor` — enables the custom encryption middleware from `interceptors/encryption.interceptors.js`
-- `logger_interceptor` — enables the request logger from `interceptors/logger.interceptors.js`
+- `errorInterceptor` — enables the custom error middleware from `interceptors/error.interceptor.js`
+- `encryption_Interceptor` — enables the custom encryption middleware from `interceptors/encryption.interceptor.js`
+- `logger_interceptor` — enables the request logger from `interceptors/logger.interceptor.js`
+- `clustering` — enables the Node.js cluster process manager, which forks worker processes and lets only the worker bind the Express server port
 
 ### Middleware loading
 
@@ -96,7 +103,7 @@ handler.
 ## Request Logging
 
 The optional request logger is implemented in
-`interceptors/logger.interceptors.js` and is enabled when
+`interceptors/logger.interceptor.js` and is enabled when
 `logger_interceptor` is `true` in `json/config.json`. It logs request details
 including the HTTP method and URL, route parameters, query values, protocol and
 host, client IP information, request body, and headers. It then passes the
@@ -193,7 +200,7 @@ If the target service is unavailable, the proxy returns:
 The project includes an error interceptor at:
 
 ```bash
-interceptors/error.interceptors.js
+interceptors/error.interceptor.js
 ```
 
 It is activated when `json/config.json` includes:
@@ -203,6 +210,25 @@ It is activated when `json/config.json` includes:
   "errorInterceptor": true
 }
 ```
+
+## Clustering
+
+The app can run with Node.js process clustering enabled via `json/config.json`:
+
+```json
+{
+  "clustering": true
+}
+```
+
+When clustering is enabled:
+
+- the primary process acts as a supervisor
+- it forks worker processes based on the available CPU count
+- a worker restarts itself if it exits unexpectedly
+- only the worker process binds the Express server port and handles incoming HTTP traffic
+
+This pattern improves concurrency and can help distribute work across CPU cores for local performance testing.
 
 ## Encryption and Security Status
 
@@ -221,7 +247,7 @@ This project includes an optional encryption interceptor, which can be enabled t
 When `encryption_Interceptor` is set to `true`, the Express app loads the middleware from:
 
 ```bash
-interceptors/encryption.interceptors.js
+interceptors/encryption.interceptor.js
 ```
 
 This middleware tries to decrypt incoming JSON payloads that contain a `data` field and re-encrypts outgoing JSON responses before sending them back to the client.

@@ -1,9 +1,10 @@
 # Architecture Overview
 
-This project is a lightweight Node.js service that demonstrates two important patterns in a single codebase:
+This project is a lightweight Node.js service that demonstrates several important patterns in a single codebase:
 
 - an Express API server for local development and experimentation
 - an HTTP reverse proxy that forwards requests to a backend service
+- optional process clustering for multi-worker request handling
 
 The design intentionally keeps dependencies minimal and configuration readable so the runtime behavior can be understood quickly without a large framework or complex infrastructure.
 
@@ -25,23 +26,26 @@ Proxy Server
 ├── index.js                     # Express app entry point
 ├── proxy.js                    # Reverse proxy entry point
 ├── middleware.loader.js        # Central middleware registration
-├── dependency.map.js           # Shared third-party dependencies
-├── interceptor.map.js          # Middleware mapping registry
+├── dependency.map.js           # Shared dependency registry
+├── interceptor.map.js          # Middleware and process registry
+├── architecture.md             # System design documentation
+├── README.md                   # Project overview and usage
+├── package.json                # App metadata and scripts
+├── package-lock.json           # Lockfile for installed packages
 ├── core/
-│   └── file.functions.js       # File-writing helper for logs
+│   └── file.functions.js       # Log file writing helper
 ├── interceptors/
-│   ├── error.interceptors.js   # Error response middleware
-│   ├── encryption.interceptors.js # Optional decrypt/encrypt middleware
-│   └── logger.interceptors.js  # Optional request logger
+│   ├── cluster.interceptor.js   # Worker supervisor for clustering
+│   ├── encryption.interceptor.js # Optional decrypt/encrypt middleware
+│   ├── error.interceptor.js    # Error response middleware
+│   └── logger.interceptor.js   # Optional request logger
 ├── json/
-│   ├── app.json                # Host/port runtime config
-│   ├── config.json             # Feature toggles for middleware
-│   └── logger.config.json      # Logging behavior config
+│   ├── app.json                # Host, port, and crypto configuration
+│   ├── config.json             # Feature toggles
+│   └── logger.config.json      # Log exclusions and file output flag
 ├── logs/                       # Runtime log directory
-├── README.md
-├── package.json
-├── package-lock.json
-└── .gitignore
+├── .gitignore
+└── node_modules/               # Installed dependencies
 ```
 
 ## 3. Runtime Components
@@ -88,6 +92,19 @@ The proxy:
 
 This is a classic simple reverse proxy pattern and is useful for learning how request forwarding works without a specialized proxy framework.
 
+### 3.3 Cluster Supervisor (`interceptors/cluster.interceptor.js`)
+
+The clustering feature uses Node.js's built-in `cluster` module to create worker processes when the application is configured with `clustering: true` in `json/config.json`.
+
+The supervisor process:
+
+- checks whether it is the primary process
+- determines the number of available CPU cores
+- forks one worker per core
+- listens for worker exits and restarts a replacement worker
+
+The actual HTTP server is not started in the primary process. Instead, the workers bind to the configured port, allowing the app to distribute incoming work across multiple processes.
+
 ## 4. Middleware Composition
 
 The application uses a centralized middleware registration pattern in `middleware.loader.js`.
@@ -117,6 +134,8 @@ This file centralizes shared libraries used across the codebase:
 - `cors`
 - `fs`
 - `path`
+- `cluster`
+- `os`
 
 This acts as a lightweight dependency registry and helps keep import points consistent.
 
@@ -127,6 +146,7 @@ This file maps logical middleware names to concrete implementation modules:
 - `errorInterceptors`
 - `encryptionInterceptor`
 - `loggerInterceptor`
+- `clusterInterceptor`
 
 This creates a single place where middleware can be registered or extended without changing multiple import sites.
 
@@ -136,7 +156,7 @@ The project supports optional processing layers that can be toggled in `json/con
 
 ### 6.1 Error Interceptor
 
-File: `interceptors/error.interceptors.js`
+File: `interceptors/error.interceptor.js`
 
 This middleware catches application errors and formats a structured JSON error response:
 
@@ -152,7 +172,7 @@ It is designed to standardize API error output.
 
 ### 6.2 Encryption Interceptor
 
-File: `interceptors/encryption.interceptors.js`
+File: `interceptors/encryption.interceptor.js`
 
 This middleware is an experimental encryption layer that:
 
@@ -165,7 +185,7 @@ The encryption uses a custom key/IV setup derived from values stored in `json/ap
 
 ### 6.3 Request Logger
 
-File: `interceptors/logger.interceptors.js`
+File: `interceptors/logger.interceptor.js`
 
 This middleware logs request details such as:
 
@@ -183,6 +203,21 @@ It then writes the sanitized object to either:
 - a dated log file in `logs/`
 
 The logger is controlled by `json/logger.config.json` and supports excluding sensitive request properties such as `body`, `headers`, `params`, or `query`.
+
+### 6.4 Cluster Supervisor
+
+File: `interceptors/cluster.interceptor.js`
+
+This interceptor is not a standard Express middleware function; it is a process-management bootstrap used when clustering is enabled in `json/config.json`.
+
+It:
+
+- checks whether the current runtime is the primary process
+- forks one child process per CPU core
+- restarts workers when they terminate
+- leaves the actual application startup to the worker instances
+
+This is a multi-process scaling pattern for local concurrency experiments rather than a production load-balancing strategy.
 
 ## 7. Configuration Model
 
@@ -210,11 +245,12 @@ This file toggles middleware behavior:
 {
   "errorInterceptor": true,
   "encryption_Interceptor": true,
-  "logger_interceptor": true
+  "logger_interceptor": true,
+  "clustering": true
 }
 ```
 
-These flags decide which optional services are enabled during app startup.
+These flags decide which optional services are enabled during app startup. The `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
 
 ### `json/logger.config.json`
 
