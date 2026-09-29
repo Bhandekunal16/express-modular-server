@@ -4,5 +4,6 @@
   "logger_interceptor": true,
   "clustering": true,
   "helmet_interceptor": true,
-  "rateLimiting" : true
+  "rateLimiting" : true,
+  "requestId" : true
 }

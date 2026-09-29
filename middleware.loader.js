@@ -5,6 +5,7 @@ const {
   encryption_Interceptor,
   logger_interceptor,
   helmet_interceptor,
+  requestId,
 } = require("./json/config.json");
 
 const {
@@ -12,9 +13,11 @@ const {
   encryptionInterceptor,
   loggerInterceptor,
   helmetInterceptor,
+  requestIdInterceptor,
 } = require("./interceptor.map");
 
 function middleware(app) {
+  if (requestId) app.use(requestIdInterceptor);
   if (helmet_interceptor) helmetInterceptor(app);
 
   app.use(cors());

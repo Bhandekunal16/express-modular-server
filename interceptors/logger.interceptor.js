@@ -17,6 +17,7 @@ module.exports = function logger(req, _, next) {
     query,
     body,
     headers,
+    requestId,
   } = req;
 
   let request = {
@@ -34,6 +35,7 @@ module.exports = function logger(req, _, next) {
     ips,
     body,
     headers,
+    requestId,
   };
 
   if (exclude.length !== 0) {

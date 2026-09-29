@@ -35,7 +35,8 @@ Proxy Server
 ├── core/
 │   └── file.functions.js       # Log file writing helper
 ├── layers/
-│   └── rate.limiting.layer.js  # Shared per-IP rate limiting
+│   ├── rate.limiting.layer.js  # Per-IP rate limiting (proxy)
+│   └── request.id.layer.js     # X-Request-ID (Express)
 ├── interceptors/
 │   ├── cluster.interceptor.js   # Worker supervisor for clustering
 │   ├── encryption.interceptor.js # Optional decrypt/encrypt middleware
@@ -119,6 +120,7 @@ The application uses a centralized middleware registration pattern in `middlewar
 
 This function registers shared application-level middleware in order:
 
+- optional request ID middleware (`layers/request.id.layer.js`)
 - optional Helmet security headers
 - CORS
 - JSON body parsing via `express.json()`
@@ -158,6 +160,7 @@ This file maps logical middleware names to concrete implementation modules:
 - `loggerInterceptor`
 - `clusterInterceptor`
 - `helmetInterceptor`
+- `requestIdInterceptor` (implemented in `layers/request.id.layer.js`)
 
 This creates a single place where middleware can be registered or extended without changing multiple import sites.
 
@@ -223,7 +226,15 @@ This middleware enables Helmet security protections when `helmet_interceptor` is
 
 It applies helmet defaults and can read optional policy overrides from `json/helmet.config.json`. This layer adds security headers such as CSP and CORS-related protections without requiring a large framework or custom header logic.
 
-### 6.5 Rate limiting
+### 6.5 Request ID
+
+File: `layers/request.id.layer.js`
+
+Express middleware registered when `requestId` is `true` in `json/config.json`. It reads `x-request-id` from the incoming request (Node lowercases header names) or generates a UUID, assigns `req.requestId`, sets the `X-Request-ID` response header, and calls `next()`.
+
+The reverse proxy does not invoke this module. Clients may still send `X-Request-ID` through the proxy because `proxy.js` forwards request headers to the backend unchanged.
+
+### 6.6 Rate limiting
 
 File: `layers/rate.limiting.layer.js`
 
@@ -235,7 +246,7 @@ The Express API (`index.js` / `middleware.loader.js`) does not use this layer. D
 
 The proxy process maintains in-memory counters per IP; there is no cross-process or multi-instance shared store.
 
-### 6.6 Cluster Supervisor
+### 6.7 Cluster Supervisor
 
 File: `interceptors/cluster.interceptor.js`
 
@@ -279,11 +290,12 @@ This file toggles middleware behavior:
   "logger_interceptor": true,
   "helmet_interceptor": true,
   "rateLimiting": true,
+  "requestId": true,
   "clustering": true
 }
 ```
 
-These flags decide which optional services are enabled during app startup. The `helmet_interceptor` flag enables the Helmet security header middleware, `rateLimiting` enables the shared rate limiting layer on the reverse proxy only, and the `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
+These flags decide which optional services are enabled during app startup. The `helmet_interceptor` flag enables the Helmet security header middleware, `requestId` enables request ID middleware on the Express app, `rateLimiting` enables the shared rate limiting layer on the reverse proxy only, and the `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
 
 ### `json/logger.config.json`
 
@@ -321,6 +333,8 @@ The layer reads `windowMs` and `limit` only. The committed defaults allow 100 re
 Client
   ↓
 Express app (index.js)
+  ↓
+Optional request ID middleware
   ↓
 Optional Helmet middleware
   ↓
@@ -399,7 +413,7 @@ This project follows a deliberately simple layered architecture:
 - entry points for each runtime service
 - a central middleware loader
 - pluggable interceptors
-- shared layers at the proxy edge (for example rate limiting in `proxy.js`)
+- shared `layers/` modules (rate limiting on the proxy; request IDs on Express)
 - JSON-based configuration
 - minimal helper utilities
 - raw Node.js proxying for request forwarding
