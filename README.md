@@ -95,7 +95,7 @@ The values are used as follows:
 - `encryption_Interceptor` — enables the custom encryption middleware from `interceptors/encryption.interceptor.js`
 - `logger_interceptor` — enables the request logger from `interceptors/logger.interceptor.js`
 - `helmet_interceptor` — enables Helmet security headers via `interceptors/helmet.interceptor.js`
-- `rateLimiting` — enables the shared rate limiter in `layers/rate.limiting.layer.js` on the reverse proxy (`proxy.js`) and registers rate limiting in the Express stack via `middleware.loader.js`
+- `rateLimiting` — enables the shared rate limiter in `layers/rate.limiting.layer.js` on the reverse proxy (`proxy.js`) only; the Express app does not apply this limit
 - `clustering` — enables the Node.js cluster process manager, which forks worker processes and lets only the worker bind the Express server port
 
 ### Middleware loading
@@ -104,9 +104,9 @@ The values are used as follows:
 `middleware(app)` function registers optional Helmet security headers when
 `helmet_interceptor` is enabled, then always registers CORS and JSON request
 parsing, then registers the encryption and logger interceptors when their
-respective configuration flags are enabled, and finally registers rate limiting
-when `rateLimiting` is enabled (backed by the shared layer in
-`layers/rate.limiting.layer.js`). The exported
+respective configuration flags are enabled. Rate limiting is not part of the
+Express middleware stack; it runs at the proxy edge in `proxy.js` when
+`rateLimiting` is true. The exported
 `errorMiddleware(app)` function registers the error interceptor only when
 `errorInterceptor` is enabled.
 
@@ -175,11 +175,9 @@ When a client exceeds `limit` within `windowMs`, the layer ends the response wit
 }
 ```
 
-**Reverse proxy:** `proxy.js` calls the layer before forwarding; if the layer returns `false`, the proxy stops and does not contact the backend.
+Rate limiting is an **edge / proxy** concern: `proxy.js` calls the layer before forwarding. If the layer returns `false`, the proxy responds with 429 and does not contact the backend. Traffic that reaches the Express app directly on `port` (bypassing the proxy) is not limited by this flag.
 
-**Express API:** `middleware.loader.js` registers rate limiting after the logger when `rateLimiting` is true, using the same configuration file.
-
-With clustering enabled, each worker process (and the separate proxy process) keeps its own in-memory counters; limits are not shared across processes.
+The proxy process keeps in-memory counters per client IP; limits are not shared across multiple proxy instances or with Express worker processes.
 
 ### File logging and excluded fields
 
@@ -347,10 +345,10 @@ It is not designed for production use without additional hardening, such as:
 - environment variables
 - proper error handling for real deployments
 
-Optional rate limiting is enabled by default in `json/config.json` for learning.
-The same flag applies to both the Express app and the reverse proxy, but counters
-are in-memory and per process; production deployments may need stricter limits, a
-shared store (for example Redis), or rate limiting at an external gateway.
+Optional rate limiting is enabled by default in `json/config.json` for learning
+on the reverse proxy only. Counters are in-memory in the proxy process;
+production deployments may need stricter limits, a shared store (for example
+Redis), or rate limiting at an external gateway.
 
 ## Scripts
 

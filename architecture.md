@@ -124,7 +124,8 @@ This function registers shared application-level middleware in order:
 - JSON body parsing via `express.json()`
 - optional encryption middleware
 - optional request logger
-- optional rate limiting (same shared layer as the proxy, registered when `rateLimiting` is true)
+
+Rate limiting is intentionally **not** registered here; it runs on the reverse proxy when `rateLimiting` is true (see §6.5 and `proxy.js`).
 
 The logic is intentionally centralized so the Express app remains simple and feature flags are easy to manage.
 
@@ -228,10 +229,11 @@ File: `layers/rate.limiting.layer.js`
 
 This is not Express middleware by itself. It is a function `(req, res) => boolean` that tracks request counts per IP in an in-memory `Map`, using `windowMs` and `limit` from `json/rate-limiting.config.json`. It sets `RateLimit-Limit` and `RateLimit-Remaining` on responses. When the limit is exceeded it writes HTTP 429 with `Retry-After` and a JSON error payload, then returns `false`; otherwise it returns `true`.
 
-- **Reverse proxy:** `proxy.js` invokes the layer before building the outbound request.
-- **Express API:** `middleware.loader.js` registers rate limiting after the logger when `rateLimiting` is true, using the same configuration.
+- **Reverse proxy only:** `proxy.js` invokes the layer before building the outbound request when `rateLimiting` is true in `json/config.json`.
 
-With clustering or separate proxy and API processes, each Node process maintains its own counters; there is no cross-process shared store.
+The Express API (`index.js` / `middleware.loader.js`) does not use this layer. Direct access to the app port bypasses proxy rate limits.
+
+The proxy process maintains in-memory counters per IP; there is no cross-process or multi-instance shared store.
 
 ### 6.6 Cluster Supervisor
 
@@ -281,7 +283,7 @@ This file toggles middleware behavior:
 }
 ```
 
-These flags decide which optional services are enabled during app startup. The `helmet_interceptor` flag enables the Helmet security header middleware, `rateLimiting` enables the shared rate limiting layer on the proxy and in the Express middleware stack, and the `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
+These flags decide which optional services are enabled during app startup. The `helmet_interceptor` flag enables the Helmet security header middleware, `rateLimiting` enables the shared rate limiting layer on the reverse proxy only, and the `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
 
 ### `json/logger.config.json`
 
@@ -327,8 +329,6 @@ CORS + JSON parser
 Optional encryption middleware
   ↓
 Optional logger middleware
-  ↓
-Optional rate limiting middleware
   ↓
 Route handler (/)
   ↓
@@ -387,7 +387,7 @@ This is a simple, local-file logging mechanism appropriate for development use.
 - plain HTTP, not HTTPS
 - no authentication or authorization
 - no validation layer
-- rate limiting is in-memory and per process (Express workers, proxy, and API are not coordinated)
+- proxy rate limiting is in-memory in the proxy process only; Express is not rate-limited by this flag, and multiple proxy instances do not share counters
 - no environment-based configuration management
 - custom encryption is not production-grade
 - no automated tests configured
@@ -399,7 +399,7 @@ This project follows a deliberately simple layered architecture:
 - entry points for each runtime service
 - a central middleware loader
 - pluggable interceptors
-- shared layers for cross-entry-point behavior (for example rate limiting)
+- shared layers at the proxy edge (for example rate limiting in `proxy.js`)
 - JSON-based configuration
 - minimal helper utilities
 - raw Node.js proxying for request forwarding
