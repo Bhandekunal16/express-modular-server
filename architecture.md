@@ -34,13 +34,14 @@ Proxy Server
 ├── package-lock.json           # Lockfile for installed packages
 ├── core/
 │   └── file.functions.js       # Log file writing helper
+├── layers/
+│   └── rate.limiting.layer.js  # Shared per-IP rate limiting
 ├── interceptors/
 │   ├── cluster.interceptor.js   # Worker supervisor for clustering
 │   ├── encryption.interceptor.js # Optional decrypt/encrypt middleware
 │   ├── error.interceptor.js    # Error response middleware
 │   ├── helmet.interceptor.js    # Security headers middleware
-│   ├── logger.interceptor.js   # Optional request logger
-│   └── rate.limiting.interceptor.js # Optional rate limiting middleware
+│   └── logger.interceptor.js   # Optional request logger
 ├── json/
 │   ├── app.json                # Host, port, and crypto configuration
 │   ├── config.json             # Feature toggles
@@ -88,11 +89,12 @@ The reverse proxy is a Node.js `http` server. It does not use Express; it create
 
 The proxy:
 
-1. reads the request URL, method, and headers
-2. builds outbound request options
-3. opens a connection to the target backend
-4. copies the backend response back to the original client
-5. returns `502 Bad Gateway` if the target cannot be reached
+1. optionally runs the shared rate limiting layer when `rateLimiting` is true (429 and no forward if the limit is exceeded)
+2. reads the request URL, method, and headers
+3. builds outbound request options
+4. opens a connection to the target backend
+5. copies the backend response back to the original client
+6. returns `502 Bad Gateway` if the target cannot be reached
 
 This is a classic simple reverse proxy pattern and is useful for learning how request forwarding works without a specialized proxy framework.
 
@@ -122,7 +124,7 @@ This function registers shared application-level middleware in order:
 - JSON body parsing via `express.json()`
 - optional encryption middleware
 - optional request logger
-- optional rate limiting middleware
+- optional rate limiting (same shared layer as the proxy, registered when `rateLimiting` is true)
 
 The logic is intentionally centralized so the Express app remains simple and feature flags are easy to manage.
 
@@ -139,7 +141,6 @@ This file centralizes shared libraries used across the codebase:
 - `express`
 - `cors`
 - `helmet`
-- `rateLimit` (`express-rate-limit`)
 - `fs`
 - `path`
 - `cluster`
@@ -156,7 +157,6 @@ This file maps logical middleware names to concrete implementation modules:
 - `loggerInterceptor`
 - `clusterInterceptor`
 - `helmetInterceptor`
-- `rateLimitInterceptor`
 
 This creates a single place where middleware can be registered or extended without changing multiple import sites.
 
@@ -224,16 +224,14 @@ It applies helmet defaults and can read optional policy overrides from `json/hel
 
 ### 6.5 Rate limiting
 
-File: `interceptors/rate.limiting.interceptor.js`
+File: `layers/rate.limiting.layer.js`
 
-This middleware limits how many requests each client IP can send within a time window when `rateLimiting` is set to `true` in `json/config.json`. It is built on `express-rate-limit` (imported as `rateLimit` from `dependency.map.js`) and reads options from `json/rate-limiting.config.json`:
+This is not Express middleware by itself. It is a function `(req, res) => boolean` that tracks request counts per IP in an in-memory `Map`, using `windowMs` and `limit` from `json/rate-limiting.config.json`. It sets `RateLimit-Limit` and `RateLimit-Remaining` on responses. When the limit is exceeded it writes HTTP 429 with `Retry-After` and a JSON error payload, then returns `false`; otherwise it returns `true`.
 
-- `windowMs` — sliding or fixed window length in milliseconds
-- `limit` — maximum requests per IP per window
-- `standardHeaders` — emit `RateLimit-*` headers on responses when enabled
-- `legacyHeaders` — emit legacy `X-RateLimit-*` headers when enabled
+- **Reverse proxy:** `proxy.js` invokes the layer before building the outbound request.
+- **Express API:** `middleware.loader.js` registers rate limiting after the logger when `rateLimiting` is true, using the same configuration.
 
-When a client exceeds the configured limit, the middleware responds with HTTP 429. Rate limiting is registered only on the Express API server, not on `proxy.js`. With clustering enabled, each worker maintains its own in-memory counters unless a shared store is configured separately in code.
+With clustering or separate proxy and API processes, each Node process maintains its own counters; there is no cross-process shared store.
 
 ### 6.6 Cluster Supervisor
 
@@ -283,7 +281,7 @@ This file toggles middleware behavior:
 }
 ```
 
-These flags decide which optional services are enabled during app startup. The `helmet_interceptor` flag enables the Helmet security header middleware, `rateLimiting` enables the `express-rate-limit` middleware, and the `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
+These flags decide which optional services are enabled during app startup. The `helmet_interceptor` flag enables the Helmet security header middleware, `rateLimiting` enables the shared rate limiting layer on the proxy and in the Express middleware stack, and the `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
 
 ### `json/logger.config.json`
 
@@ -300,7 +298,7 @@ The `exclude` array prevents selected request fields from being emitted to the c
 
 ### `json/rate-limiting.config.json`
 
-This file configures the optional rate limiting middleware:
+This file configures the shared rate limiting layer:
 
 ```json
 {
@@ -311,7 +309,7 @@ This file configures the optional rate limiting middleware:
 }
 ```
 
-The committed defaults allow 100 requests per client IP every 15 minutes and use standard `RateLimit-*` response headers.
+The layer reads `windowMs` and `limit` only. The committed defaults allow 100 requests per client IP every 15 minutes. The layer always emits `RateLimit-Limit` and `RateLimit-Remaining`; `standardHeaders` and `legacyHeaders` are kept in JSON for forward compatibility but are not used by the current implementation.
 
 ## 8. Request Flow
 
@@ -347,6 +345,8 @@ Client
 Client
   ↓
 Proxy server (proxy.js)
+  ↓
+Optional rate limiting layer
   ↓
 Read request metadata
   ↓
@@ -387,7 +387,7 @@ This is a simple, local-file logging mechanism appropriate for development use.
 - plain HTTP, not HTTPS
 - no authentication or authorization
 - no validation layer
-- rate limiting is in-memory and per Express worker; not applied on the reverse proxy
+- rate limiting is in-memory and per process (Express workers, proxy, and API are not coordinated)
 - no environment-based configuration management
 - custom encryption is not production-grade
 - no automated tests configured
@@ -399,6 +399,7 @@ This project follows a deliberately simple layered architecture:
 - entry points for each runtime service
 - a central middleware loader
 - pluggable interceptors
+- shared layers for cross-entry-point behavior (for example rate limiting)
 - JSON-based configuration
 - minimal helper utilities
 - raw Node.js proxying for request forwarding

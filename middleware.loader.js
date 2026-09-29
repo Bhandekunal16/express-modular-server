@@ -5,7 +5,6 @@ const {
   encryption_Interceptor,
   logger_interceptor,
   helmet_interceptor,
-  rateLimiting
 } = require("./json/config.json");
 
 const {
@@ -13,7 +12,6 @@ const {
   encryptionInterceptor,
   loggerInterceptor,
   helmetInterceptor,
-  rateLimitInterceptor
 } = require("./interceptor.map");
 
 function middleware(app) {
@@ -24,7 +22,6 @@ function middleware(app) {
 
   if (encryption_Interceptor) app.use(encryptionInterceptor);
   if (logger_interceptor) app.use(loggerInterceptor);
-  if (rateLimiting) app.use(rateLimitInterceptor)
 }
 
 function errorMiddleware(app) {
