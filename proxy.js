@@ -38,18 +38,13 @@ function trackProxyRequest(proxyReq) {
 
 const server = http.createServer((req, res) => {
   if (isShuttingDown()) {
-    if (!res.headersSent) {
-      res.writeHead(503, { "Content-Type": "text/plain" });
-    }
-    if (!res.writableEnded) {
-      res.end("Service Unavailable");
-    }
+    if (!res.headersSent) res.writeHead(503, { "Content-Type": "text/plain" });
+    if (!res.writableEnded) res.end("Service Unavailable");
+
     return;
   }
 
-  if (rateLimiting && !rateLimiter(req, res)) {
-    return;
-  }
+  if (rateLimiting && !rateLimiter(req, res)) return;
 
   const { url: path, method, headers } = req;
 

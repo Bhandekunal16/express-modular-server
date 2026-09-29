@@ -26,9 +26,7 @@ function waitForActiveRequests(activeRequests, name, checkIntervalMs = 100) {
 }
 
 function destroyActiveRequests(activeRequests, name) {
-  if (!activeRequests || activeRequests.size === 0) {
-    return;
-  }
+  if (!activeRequests || activeRequests.size === 0) return;
 
   const count = activeRequests.size;
   console.log(`${name}: destroying ${count} active requests`);
@@ -53,9 +51,7 @@ function destroyActiveRequests(activeRequests, name) {
 }
 
 function runGracefulShutdown(signal) {
-  if (!shutdownConfig || shutdownStarted) {
-    return;
-  }
+  if (!shutdownConfig || shutdownStarted) return;
 
   shutdownStarted = true;
 
@@ -65,9 +61,7 @@ function runGracefulShutdown(signal) {
   console.log(`${signal} received. Starting graceful shutdown...`);
   console.log(`${name}: stopping new requests`);
 
-  if (typeof onShutdown === "function") {
-    onShutdown();
-  }
+  if (typeof onShutdown === "function") onShutdown();
 
   const forceTimer = setTimeout(() => {
     console.log(`${name}: shutdown timeout`);
@@ -76,9 +70,7 @@ function runGracefulShutdown(signal) {
   }, shutdownTimeout);
 
   server.close((err) => {
-    if (err) {
-      console.error(`${name}: server.close error:`, err.message);
-    }
+    if (err) console.error(`${name}: server.close error:`, err.message);
 
     waitForActiveRequests(activeRequests, name).then(() => {
       clearTimeout(forceTimer);
@@ -106,9 +98,7 @@ function registerClusterPrimaryShutdown({
   markClusterShuttingDown,
 }) {
   const runClusterShutdown = (signal) => {
-    if (clusterShutdownStarted) {
-      return;
-    }
+    if (clusterShutdownStarted) return;
 
     clusterShutdownStarted = true;
     shutdownStarted = true;
@@ -116,9 +106,8 @@ function registerClusterPrimaryShutdown({
     console.log(`${signal} received. Starting graceful shutdown...`);
     console.log("Cluster primary: shutting down workers");
 
-    if (typeof markClusterShuttingDown === "function") {
+    if (typeof markClusterShuttingDown === "function")
       markClusterShuttingDown();
-    }
 
     const workers = Object.values(cluster.workers);
 
@@ -169,9 +158,7 @@ function registerClusterPrimaryShutdown({
 }
 
 function registerWorkerShutdownMessage(onShutdownMessage) {
-  if (!cluster.isWorker) {
-    return;
-  }
+  if (!cluster.isWorker) return;
 
   process.on("message", (message) => {
     if (message === "shutdown") {
