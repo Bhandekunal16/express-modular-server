@@ -4,4 +4,5 @@ module.exports = {
   fs: require("fs"),
   path: require("path"),
   cluster: require("cluster"),
+  os : require("os")
 };

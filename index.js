@@ -1,5 +1,7 @@
 const { express } = require("./dependency.map");
+const { clusterInterceptor } = require("./interceptor.map");
 const { host, port } = require("./json/app.json");
+const { clustering } = require("./json/config.json");
 const { middleware, errorMiddleware } = require("./middleware.loader");
 
 const app = express();
@@ -19,6 +21,8 @@ app.use((_, res) => {
     message: "Not Found",
   });
 });
+
+if (clustering) clusterInterceptor();
 
 errorMiddleware(app);
 
