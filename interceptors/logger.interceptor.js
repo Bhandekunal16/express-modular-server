@@ -17,8 +17,10 @@ module.exports = function logger(req, _, next) {
     query,
     body,
     headers,
-    requestId,
   } = req;
+
+  const resolvedRequestId =
+    req.requestId || req.headers["x-request-id"] || "N/A";
 
   let request = {
     method,
@@ -35,7 +37,7 @@ module.exports = function logger(req, _, next) {
     ips,
     body,
     headers,
-    requestId,
+    requestId: resolvedRequestId,
   };
 
   if (exclude.length !== 0) {

@@ -40,7 +40,8 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 │   ├── encryption.interceptor.js
 │   ├── error.interceptor.js
 │   ├── helmet.interceptor.js
-│   └── logger.interceptor.js
+│   ├── logger.interceptor.js
+│   └── response.interceptor.js
 ├── logs/
 ├── .gitignore
 └── node_modules/
@@ -56,6 +57,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 - Optional error interceptor middleware
 - Optional encryption interceptor middleware
 - Optional request logging middleware
+- Optional response summary logging (status, duration, content length)
 - Optional Helmet-based security headers middleware
 - Optional per-request `X-Request-ID` on the Express API (propagate or generate UUID)
 - Optional per-IP rate limiting via a shared in-memory layer on the reverse proxy (JSON-tuned)
@@ -90,7 +92,8 @@ The values are used as follows:
   "clustering": true,
   "helmet_interceptor": true,
   "rateLimiting": true,
-  "requestId": true
+  "requestId": true,
+  "response_interceptor": true
 }
 ```
 
@@ -100,6 +103,7 @@ The values are used as follows:
 - `helmet_interceptor` — enables Helmet security headers via `interceptors/helmet.interceptor.js`
 - `rateLimiting` — enables the shared rate limiter in `layers/rate.limiting.layer.js` on the reverse proxy (`proxy.js`) only; the Express app does not apply this limit
 - `requestId` — enables request ID middleware from `layers/request.id.layer.js` on the Express app only
+- `response_interceptor` — enables response summary logging from `interceptors/response.interceptor.js` on the Express app
 - `clustering` — enables the Node.js cluster process manager, which forks worker processes and lets only the worker bind the Express server port
 
 ### Middleware loading
@@ -109,9 +113,10 @@ The values are used as follows:
 `requestId` is enabled, then optional Helmet security headers when
 `helmet_interceptor` is enabled (via `helmetInterceptor(app)`), then always
 registers CORS and JSON request parsing, then registers the encryption and
-logger interceptors when their respective configuration flags are enabled. Rate
-limiting is not part of the Express middleware stack; it runs at the proxy edge
-in `proxy.js` when `rateLimiting` is true. The exported
+logger interceptors when their respective configuration flags are enabled, then
+the response logger when `response_interceptor` is enabled. Rate limiting is not
+part of the Express middleware stack; it runs at the proxy edge in `proxy.js`
+when `rateLimiting` is true. The exported
 `errorMiddleware(app)` function registers the error interceptor only when
 `errorInterceptor` is enabled.
 
@@ -128,6 +133,20 @@ The optional request logger is implemented in
 including the HTTP method and URL, route parameters, query values, protocol and
 host, client IP information, request body, and headers. It then passes the
 request to the next middleware; it does not log responses.
+
+For correlation, logged entries include `requestId` resolved as
+`req.requestId`, then the incoming `x-request-id` header, then `"N/A"` if
+neither is present (for example when `requestId` is disabled in config but the
+client still sends a header).
+
+## Response logging
+
+The optional response logger in `interceptors/response.interceptor.js` is enabled
+with `response_interceptor: true` in `json/config.json`. It records a summary
+when the response finishes (`res` `"finish"` event): the same `requestId`
+resolution as the request logger, HTTP method, path, `statusCode`, duration, and
+response `content-length`. It runs after the request logger in
+`middleware.loader.js` and only on the Express API.
 
 ## Helmet Security Headers
 
@@ -335,7 +354,8 @@ This project includes an optional encryption interceptor, which can be enabled t
   "clustering": true,
   "helmet_interceptor": true,
   "rateLimiting": true,
-  "requestId": true
+  "requestId": true,
+  "response_interceptor": true
 }
 ```
 

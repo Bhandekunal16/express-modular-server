@@ -42,7 +42,8 @@ Proxy Server
 │   ├── encryption.interceptor.js # Optional decrypt/encrypt middleware
 │   ├── error.interceptor.js    # Error response middleware
 │   ├── helmet.interceptor.js    # Security headers middleware
-│   └── logger.interceptor.js   # Optional request logger
+│   ├── logger.interceptor.js   # Optional request logger
+│   └── response.interceptor.js # Optional response summary logger
 ├── json/
 │   ├── app.json                # Host, port, and crypto configuration
 │   ├── config.json             # Feature toggles
@@ -126,6 +127,7 @@ This function registers shared application-level middleware in order:
 - JSON body parsing via `express.json()`
 - optional encryption middleware
 - optional request logger
+- optional response logger (`interceptors/response.interceptor.js`)
 
 Rate limiting is intentionally **not** registered here; it runs on the reverse proxy when `rateLimiting` is true (see §6.5 and `proxy.js`).
 
@@ -161,6 +163,7 @@ This file maps logical middleware names to concrete implementation modules:
 - `clusterInterceptor`
 - `helmetInterceptor`
 - `requestIdInterceptor` (implemented in `layers/request.id.layer.js`)
+- `responseInterceptor`
 
 This creates a single place where middleware can be registered or extended without changing multiple import sites.
 
@@ -218,7 +221,15 @@ It then writes the sanitized object to either:
 
 The logger is controlled by `json/logger.config.json` and supports excluding sensitive request properties such as `body`, `headers`, `params`, or `query`.
 
-### 6.4 Helmet Security Headers
+Logged `requestId` is resolved as `req.requestId`, then the incoming `x-request-id` header, then `"N/A"`, so request and response logs stay aligned even when the request ID layer is disabled.
+
+### 6.4 Response logger
+
+File: `interceptors/response.interceptor.js`
+
+When `response_interceptor` is `true`, this middleware starts a timer and listens for `res` `"finish"`. It logs method, path, `res.statusCode`, duration (via `performance` from `dependency.map.js`), response `content-length`, and the same `requestId` resolution as the request logger.
+
+### 6.5 Helmet Security Headers
 
 File: `interceptors/helmet.interceptor.js`
 
@@ -226,7 +237,7 @@ This middleware enables Helmet security protections when `helmet_interceptor` is
 
 It applies helmet defaults and can read optional policy overrides from `json/helmet.config.json`. This layer adds security headers such as CSP and CORS-related protections without requiring a large framework or custom header logic.
 
-### 6.5 Request ID
+### 6.6 Request ID
 
 File: `layers/request.id.layer.js`
 
@@ -234,7 +245,7 @@ Express middleware registered when `requestId` is `true` in `json/config.json`. 
 
 The reverse proxy does not invoke this module. Clients may still send `X-Request-ID` through the proxy because `proxy.js` forwards request headers to the backend unchanged.
 
-### 6.6 Rate limiting
+### 6.7 Rate limiting
 
 File: `layers/rate.limiting.layer.js`
 
@@ -246,7 +257,7 @@ The Express API (`index.js` / `middleware.loader.js`) does not use this layer. D
 
 The proxy process maintains in-memory counters per IP; there is no cross-process or multi-instance shared store.
 
-### 6.7 Cluster Supervisor
+### 6.8 Cluster Supervisor
 
 File: `interceptors/cluster.interceptor.js`
 
@@ -291,11 +302,12 @@ This file toggles middleware behavior:
   "helmet_interceptor": true,
   "rateLimiting": true,
   "requestId": true,
+  "response_interceptor": true,
   "clustering": true
 }
 ```
 
-These flags decide which optional services are enabled during app startup. The `helmet_interceptor` flag enables the Helmet security header middleware, `requestId` enables request ID middleware on the Express app, `rateLimiting` enables the shared rate limiting layer on the reverse proxy only, and the `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
+These flags decide which optional services are enabled during app startup. The `helmet_interceptor` flag enables the Helmet security header middleware, `requestId` enables request ID middleware on the Express app, `response_interceptor` enables response summary logging, `rateLimiting` enables the shared rate limiting layer on the reverse proxy only, and the `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
 
 ### `json/logger.config.json`
 
@@ -343,6 +355,8 @@ CORS + JSON parser
 Optional encryption middleware
   ↓
 Optional logger middleware
+  ↓
+Optional response logger middleware
   ↓
 Route handler (/)
   ↓

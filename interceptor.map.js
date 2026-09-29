@@ -5,4 +5,5 @@ module.exports = {
   clusterInterceptor: require("./interceptors/cluster.interceptor"),
   helmetInterceptor: require("./interceptors/helmet.interceptor"),
   requestIdInterceptor: require("./layers/request.id.layer"),
+  responseInterceptor: require("./interceptors/response.interceptor"),
 };

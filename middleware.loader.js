@@ -6,6 +6,7 @@ const {
   logger_interceptor,
   helmet_interceptor,
   requestId,
+  response_interceptor,
 } = require("./json/config.json");
 
 const {
@@ -14,6 +15,7 @@ const {
   loggerInterceptor,
   helmetInterceptor,
   requestIdInterceptor,
+  responseInterceptor,
 } = require("./interceptor.map");
 
 function middleware(app) {
@@ -25,6 +27,7 @@ function middleware(app) {
 
   if (encryption_Interceptor) app.use(encryptionInterceptor);
   if (logger_interceptor) app.use(loggerInterceptor);
+  if (response_interceptor) app.use(responseInterceptor);
 }
 
 function errorMiddleware(app) {

@@ -1,3 +1,5 @@
+const { performance } = require("node:perf_hooks");
+
 module.exports = {
   express: require("express"),
   cors: require("cors"),
@@ -7,4 +9,5 @@ module.exports = {
   os: require("os"),
   helmet: require("helmet"),
   rateLimit: require("express-rate-limit"),
+  performance,
 };
