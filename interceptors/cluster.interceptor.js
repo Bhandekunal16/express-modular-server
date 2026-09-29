@@ -4,8 +4,6 @@ module.exports = function clustering() {
   if (cluster.isPrimary) {
     const numCPUs = os.cpus().length;
 
-    console.log({ number_of_cpu: numCPUs });
-
     for (let cpu = 0; cpu < numCPUs; cpu++) {
       cluster.fork();
     }
