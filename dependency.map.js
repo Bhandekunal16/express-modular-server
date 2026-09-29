@@ -3,4 +3,5 @@ module.exports = {
   cors: require("cors"),
   fs: require("fs"),
   path: require("path"),
+  cluster: require("cluster"),
 };

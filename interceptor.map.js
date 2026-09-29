@@ -1,5 +1,5 @@
 module.exports = {
-  errorInterceptors: require("./interceptors/error.interceptors"),
-  encryptionInterceptor: require("./interceptors/encryption.interceptors"),
-  loggerInterceptor: require("./interceptors/logger.interceptors"),
+  errorInterceptors: require("./interceptors/error.interceptor"),
+  encryptionInterceptor: require("./interceptors/encryption.interceptor"),
+  loggerInterceptor: require("./interceptors/logger.interceptor"),
 };
