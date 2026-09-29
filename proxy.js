@@ -1,11 +1,19 @@
 const http = require("http");
+
 const {
   host: TARGET_HOST,
   port: TARGET_PORT,
   proxyPort,
 } = require("./json/app.json");
 
+const rateLimiter = require("./layers/rate.limiting.layer");
+const { rateLimiting } = require("./json/config.json");
+
 const server = http.createServer((req, res) => {
+  if (rateLimiting && !rateLimiter(req, res)) {
+    return;
+  }
+
   const { url: path, method, headers } = req;
 
   const options = {
@@ -24,7 +32,11 @@ const server = http.createServer((req, res) => {
 
   proxyReq.on("error", (e) => {
     console.error("Proxy error:", e.message);
-    res.writeHead(502);
+
+    if (!res.headersSent) {
+      res.writeHead(502);
+    }
+
     res.end("Bad Gateway");
   });
 

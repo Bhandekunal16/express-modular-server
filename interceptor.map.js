@@ -4,5 +4,4 @@ module.exports = {
   loggerInterceptor: require("./interceptors/logger.interceptor"),
   clusterInterceptor: require("./interceptors/cluster.interceptor"),
   helmetInterceptor: require("./interceptors/helmet.interceptor"),
-  rateLimitInterceptor: require("./interceptors/rate.limiting.interceptor"),
 };
