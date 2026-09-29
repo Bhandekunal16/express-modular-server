@@ -230,7 +230,9 @@ Logged `requestId` is resolved as `req.requestId`, then the incoming `x-request-
 
 File: `interceptors/response.interceptor.js`
 
-When `response_interceptor` is `true`, this middleware starts a timer and listens for `res` `"finish"`. It logs method, path, `res.statusCode`, duration (via `performance` from `dependency.map.js`), response `content-length`, and the same `requestId` resolution as the request logger.
+When `response_interceptor` is `true`, this middleware starts a timer and listens for `res` `"finish"`. It logs `method`, `originalUrl`, `statusCode`, numeric `durationMs` (via `performance` from `dependency.map.js`), `contentLength` from `res.getHeader("content-length")`, and the same `requestId` resolution as the request logger.
+
+When `WRITE_L0G` is true, each summary is also appended to the dated file under `logs/` through `core/file.functions.js`. Request-log `exclude` does not apply to this object.
 
 ### 6.5 Helmet Security Headers
 
@@ -330,7 +332,7 @@ This file controls logging output and field exclusion.
 }
 ```
 
-The `exclude` array prevents selected request fields from being emitted to the console or file, which is important when handling sensitive data.
+The `exclude` array prevents selected request fields from being emitted to the console or file, which is important when handling sensitive data. `WRITE_L0G` also controls whether the response logger writes summaries to the same log files.
 
 ### `json/rate-limiting.config.json`
 

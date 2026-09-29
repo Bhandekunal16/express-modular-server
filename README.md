@@ -57,7 +57,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 - Optional error interceptor middleware
 - Optional encryption interceptor middleware
 - Optional request logging middleware
-- Optional response summary logging (status, duration, content length)
+- Optional response summary logging (status, duration in milliseconds, content length)
 - Optional Helmet-based security headers middleware
 - Optional per-request `X-Request-ID` on the Express API (propagate or generate UUID)
 - Optional per-IP rate limiting via a shared in-memory layer on the reverse proxy (JSON-tuned)
@@ -161,9 +161,15 @@ client still sends a header).
 The optional response logger in `interceptors/response.interceptor.js` is enabled
 with `response_interceptor: true` in `json/config.json`. It records a summary
 when the response finishes (`res` `"finish"` event): the same `requestId`
-resolution as the request logger, HTTP method, path, `statusCode`, duration, and
-response `content-length`. It runs after the request logger in
-`middleware.loader.js` and only on the Express API.
+resolution as the request logger, HTTP method, `originalUrl`, `statusCode`,
+`durationMs` (numeric milliseconds via `performance` from `dependency.map.js`),
+and `contentLength` from `res.getHeader("content-length")`. It runs after the
+request logger in `middleware.loader.js` and only on the Express API.
+
+When `WRITE_L0G` is true in `json/logger.config.json`, each response summary is
+also appended as a JSON line under `logs/`, using the same file helper as the
+request logger. The `exclude` array applies only to request logs, not these
+response summaries.
 
 ## Helmet Security Headers
 
@@ -238,8 +244,9 @@ The proxy process keeps in-memory counters per client IP; limits are not shared 
 
 ### File logging and excluded fields
 
-`json/logger.config.json` controls file output and which request properties are
-omitted from the logged object:
+`json/logger.config.json` controls file output for both the request logger and
+the response logger, and which request properties are omitted from the
+**request** logged object:
 
 ```json
 {
@@ -248,11 +255,11 @@ omitted from the logged object:
 }
 ```
 
-`WRITE_L0G` (with a zero in `L0G`) enables appending each logged request as a
-JSON line to a date-named text file under `logs/` (for example,
-`logs/2026-09-29.txt`). The `logs/` directory is created automatically. Set
-`WRITE_L0G` to `false` to disable file output; request details are still sent
-to the console.
+`WRITE_L0G` (with a zero in `L0G`) enables appending each request log and each
+response summary as a JSON line to a date-named text file under `logs/` (for
+example, `logs/2026-09-29.txt`). The `logs/` directory is created automatically.
+Set `WRITE_L0G` to `false` to disable file output; details are still sent to
+the console.
 
 Entries in `exclude` are request property names, such as `body`, `headers`,
 `params`, or `query`. Excluded properties are removed before the request is
