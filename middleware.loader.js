@@ -15,7 +15,7 @@ const {
 } = require("./interceptor.map");
 
 function middleware(app) {
-  if (helmet_interceptor) app.use(helmetInterceptor);
+  if (helmet_interceptor) helmetInterceptor(app);
 
   app.use(cors());
   app.use(express.json());
