@@ -27,13 +27,15 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 ├── json/
 │   ├── app.json
 │   ├── config.json
-│   └── logger.config.json
+│   ├── logger.config.json
+│   └── helmet.config.json
 ├── core/
 │   └── file.functions.js
 ├── interceptors/
 │   ├── cluster.interceptor.js
 │   ├── encryption.interceptor.js
 │   ├── error.interceptor.js
+│   ├── helmet.interceptor.js
 │   └── logger.interceptor.js
 ├── logs/
 ├── .gitignore
@@ -50,6 +52,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 - Optional error interceptor middleware
 - Optional encryption interceptor middleware
 - Optional request logging middleware
+- Optional Helmet-based security headers middleware
 - Optional worker clustering through Node.js `cluster` module
 - Easy host/port configuration through JSON files
 
@@ -78,13 +81,15 @@ The values are used as follows:
   "errorInterceptor": true,
   "encryption_Interceptor": true,
   "logger_interceptor": true,
-  "clustering": true
+  "clustering": true,
+  "helmet_interceptor": true
 }
 ```
 
 - `errorInterceptor` — enables the custom error middleware from `interceptors/error.interceptor.js`
 - `encryption_Interceptor` — enables the custom encryption middleware from `interceptors/encryption.interceptor.js`
 - `logger_interceptor` — enables the request logger from `interceptors/logger.interceptor.js`
+- `helmet_interceptor` — enables Helmet security headers via `interceptors/helmet.interceptor.js`
 - `clustering` — enables the Node.js cluster process manager, which forks worker processes and lets only the worker bind the Express server port
 
 ### Middleware loading
@@ -108,6 +113,27 @@ The optional request logger is implemented in
 including the HTTP method and URL, route parameters, query values, protocol and
 host, client IP information, request body, and headers. It then passes the
 request to the next middleware; it does not log responses.
+
+## Helmet Security Headers
+
+The project also supports a Helmet-based security interceptor. It is enabled via
+`json/config.json` with `helmet_interceptor: true` and is implemented in
+`interceptors/helmet.interceptor.js`.
+
+The interceptor applies Helmet defaults when the config file is empty, but it can
+also load custom options from `json/helmet.config.json` to tune policies such as
+`contentSecurityPolicy` and `crossOriginResourcePolicy`.
+
+Example `json/helmet.config.json`:
+
+```json
+{
+  "contentSecurityPolicy": false,
+  "crossOriginResourcePolicy": {
+    "policy": "cross-origin"
+  }
+}
+```
 
 ### File logging and excluded fields
 

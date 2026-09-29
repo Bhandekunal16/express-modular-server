@@ -38,11 +38,13 @@ Proxy Server
 │   ├── cluster.interceptor.js   # Worker supervisor for clustering
 │   ├── encryption.interceptor.js # Optional decrypt/encrypt middleware
 │   ├── error.interceptor.js    # Error response middleware
+│   ├── helmet.interceptor.js    # Security headers middleware
 │   └── logger.interceptor.js   # Optional request logger
 ├── json/
 │   ├── app.json                # Host, port, and crypto configuration
 │   ├── config.json             # Feature toggles
-│   └── logger.config.json      # Log exclusions and file output flag
+│   ├── logger.config.json      # Log exclusions and file output flag
+│   └── helmet.config.json       # Helmet security policy configuration
 ├── logs/                       # Runtime log directory
 ├── .gitignore
 └── node_modules/               # Installed dependencies
@@ -132,6 +134,7 @@ This file centralizes shared libraries used across the codebase:
 
 - `express`
 - `cors`
+- `helmet`
 - `fs`
 - `path`
 - `cluster`
@@ -204,7 +207,15 @@ It then writes the sanitized object to either:
 
 The logger is controlled by `json/logger.config.json` and supports excluding sensitive request properties such as `body`, `headers`, `params`, or `query`.
 
-### 6.4 Cluster Supervisor
+### 6.4 Helmet Security Headers
+
+File: `interceptors/helmet.interceptor.js`
+
+This middleware enables Helmet security protections when `helmet_interceptor` is set to `true` in `json/config.json`.
+
+It applies helmet defaults and can read optional policy overrides from `json/helmet.config.json`. This layer adds security headers such as CSP and CORS-related protections without requiring a large framework or custom header logic.
+
+### 6.5 Cluster Supervisor
 
 File: `interceptors/cluster.interceptor.js`
 
@@ -246,11 +257,12 @@ This file toggles middleware behavior:
   "errorInterceptor": true,
   "encryption_Interceptor": true,
   "logger_interceptor": true,
+  "helmet_interceptor": true,
   "clustering": true
 }
 ```
 
-These flags decide which optional services are enabled during app startup. The `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
+These flags decide which optional services are enabled during app startup. The `helmet_interceptor` flag enables the Helmet security header middleware, while the `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
 
 ### `json/logger.config.json`
 

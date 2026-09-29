@@ -1,6 +1,7 @@
 {
   "errorInterceptor": true,
   "encryption_Interceptor": true,
-  "logger_interceptor" : true,
-  "clustering": true
+  "logger_interceptor": true,
+  "clustering": true,
+  "helmet_interceptor": true
 }

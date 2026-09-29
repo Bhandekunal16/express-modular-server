@@ -3,4 +3,5 @@ module.exports = {
   encryptionInterceptor: require("./interceptors/encryption.interceptor"),
   loggerInterceptor: require("./interceptors/logger.interceptor"),
   clusterInterceptor: require("./interceptors/cluster.interceptor"),
+  helmetInterceptor: require("./interceptors/helmet.interceptor"),
 };

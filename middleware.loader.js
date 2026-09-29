@@ -4,15 +4,19 @@ const {
   errorInterceptor,
   encryption_Interceptor,
   logger_interceptor,
+  helmet_interceptor,
 } = require("./json/config.json");
 
 const {
   errorInterceptors,
   encryptionInterceptor,
   loggerInterceptor,
+  helmetInterceptor,
 } = require("./interceptor.map");
 
 function middleware(app) {
+  if (helmet_interceptor) app.use(helmetInterceptor);
+
   app.use(cors());
   app.use(express.json());
 
