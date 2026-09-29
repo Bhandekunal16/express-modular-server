@@ -1,4 +1,4 @@
-const { express } = require("./dependency.map");
+const { express, cluster } = require("./dependency.map");
 const { clusterInterceptor } = require("./interceptor.map");
 const { host, port } = require("./json/app.json");
 const { clustering } = require("./json/config.json");
@@ -22,10 +22,12 @@ app.use((_, res) => {
   });
 });
 
-if (clustering) clusterInterceptor();
+if (clustering && cluster.isPrimary) {
+  clusterInterceptor();
+} else {
+  errorMiddleware(app);
 
-errorMiddleware(app);
-
-app.listen(port, host, () => {
-  console.log(`http://${host}:${port}`);
-});
+  app.listen(port, host, () => {
+    console.log(`http://${host}:${port}`);
+  });
+}
