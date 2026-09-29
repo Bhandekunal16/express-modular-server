@@ -39,12 +39,14 @@ Proxy Server
 │   ├── encryption.interceptor.js # Optional decrypt/encrypt middleware
 │   ├── error.interceptor.js    # Error response middleware
 │   ├── helmet.interceptor.js    # Security headers middleware
-│   └── logger.interceptor.js   # Optional request logger
+│   ├── logger.interceptor.js   # Optional request logger
+│   └── rate.limiting.interceptor.js # Optional rate limiting middleware
 ├── json/
 │   ├── app.json                # Host, port, and crypto configuration
 │   ├── config.json             # Feature toggles
 │   ├── logger.config.json      # Log exclusions and file output flag
-│   └── helmet.config.json       # Helmet security policy configuration
+│   ├── helmet.config.json       # Helmet security policy configuration
+│   └── rate-limiting.config.json # Rate limit window and request cap
 ├── logs/                       # Runtime log directory
 ├── .gitignore
 └── node_modules/               # Installed dependencies
@@ -113,12 +115,14 @@ The application uses a centralized middleware registration pattern in `middlewar
 
 ### `middleware(app)`
 
-This function registers shared application-level middleware:
+This function registers shared application-level middleware in order:
 
+- optional Helmet security headers
 - CORS
 - JSON body parsing via `express.json()`
 - optional encryption middleware
 - optional request logger
+- optional rate limiting middleware
 
 The logic is intentionally centralized so the Express app remains simple and feature flags are easy to manage.
 
@@ -135,6 +139,7 @@ This file centralizes shared libraries used across the codebase:
 - `express`
 - `cors`
 - `helmet`
+- `rateLimit` (`express-rate-limit`)
 - `fs`
 - `path`
 - `cluster`
@@ -150,6 +155,8 @@ This file maps logical middleware names to concrete implementation modules:
 - `encryptionInterceptor`
 - `loggerInterceptor`
 - `clusterInterceptor`
+- `helmetInterceptor`
+- `rateLimitInterceptor`
 
 This creates a single place where middleware can be registered or extended without changing multiple import sites.
 
@@ -215,7 +222,20 @@ This middleware enables Helmet security protections when `helmet_interceptor` is
 
 It applies helmet defaults and can read optional policy overrides from `json/helmet.config.json`. This layer adds security headers such as CSP and CORS-related protections without requiring a large framework or custom header logic.
 
-### 6.5 Cluster Supervisor
+### 6.5 Rate limiting
+
+File: `interceptors/rate.limiting.interceptor.js`
+
+This middleware limits how many requests each client IP can send within a time window when `rateLimiting` is set to `true` in `json/config.json`. It is built on `express-rate-limit` (imported as `rateLimit` from `dependency.map.js`) and reads options from `json/rate-limiting.config.json`:
+
+- `windowMs` — sliding or fixed window length in milliseconds
+- `limit` — maximum requests per IP per window
+- `standardHeaders` — emit `RateLimit-*` headers on responses when enabled
+- `legacyHeaders` — emit legacy `X-RateLimit-*` headers when enabled
+
+When a client exceeds the configured limit, the middleware responds with HTTP 429. Rate limiting is registered only on the Express API server, not on `proxy.js`. With clustering enabled, each worker maintains its own in-memory counters unless a shared store is configured separately in code.
+
+### 6.6 Cluster Supervisor
 
 File: `interceptors/cluster.interceptor.js`
 
@@ -258,11 +278,12 @@ This file toggles middleware behavior:
   "encryption_Interceptor": true,
   "logger_interceptor": true,
   "helmet_interceptor": true,
+  "rateLimiting": true,
   "clustering": true
 }
 ```
 
-These flags decide which optional services are enabled during app startup. The `helmet_interceptor` flag enables the Helmet security header middleware, while the `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
+These flags decide which optional services are enabled during app startup. The `helmet_interceptor` flag enables the Helmet security header middleware, `rateLimiting` enables the `express-rate-limit` middleware, and the `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
 
 ### `json/logger.config.json`
 
@@ -277,6 +298,21 @@ This file controls logging output and field exclusion.
 
 The `exclude` array prevents selected request fields from being emitted to the console or file, which is important when handling sensitive data.
 
+### `json/rate-limiting.config.json`
+
+This file configures the optional rate limiting middleware:
+
+```json
+{
+  "windowMs": 900000,
+  "limit": 100,
+  "standardHeaders": true,
+  "legacyHeaders": false
+}
+```
+
+The committed defaults allow 100 requests per client IP every 15 minutes and use standard `RateLimit-*` response headers.
+
 ## 8. Request Flow
 
 ### API Request Lifecycle
@@ -286,11 +322,15 @@ Client
   ↓
 Express app (index.js)
   ↓
+Optional Helmet middleware
+  ↓
 CORS + JSON parser
   ↓
 Optional encryption middleware
   ↓
 Optional logger middleware
+  ↓
+Optional rate limiting middleware
   ↓
 Route handler (/)
   ↓
@@ -347,7 +387,7 @@ This is a simple, local-file logging mechanism appropriate for development use.
 - plain HTTP, not HTTPS
 - no authentication or authorization
 - no validation layer
-- no rate limiting
+- rate limiting is in-memory and per Express worker; not applied on the reverse proxy
 - no environment-based configuration management
 - custom encryption is not production-grade
 - no automated tests configured

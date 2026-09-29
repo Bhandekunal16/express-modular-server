@@ -28,7 +28,8 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 │   ├── app.json
 │   ├── config.json
 │   ├── logger.config.json
-│   └── helmet.config.json
+│   ├── helmet.config.json
+│   └── rate-limiting.config.json
 ├── core/
 │   └── file.functions.js
 ├── interceptors/
@@ -36,7 +37,8 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 │   ├── encryption.interceptor.js
 │   ├── error.interceptor.js
 │   ├── helmet.interceptor.js
-│   └── logger.interceptor.js
+│   ├── logger.interceptor.js
+│   └── rate.limiting.interceptor.js
 ├── logs/
 ├── .gitignore
 └── node_modules/
@@ -53,6 +55,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 - Optional encryption interceptor middleware
 - Optional request logging middleware
 - Optional Helmet-based security headers middleware
+- Optional request rate limiting via `express-rate-limit`
 - Optional worker clustering through Node.js `cluster` module
 - Easy host/port configuration through JSON files
 
@@ -82,7 +85,8 @@ The values are used as follows:
   "encryption_Interceptor": true,
   "logger_interceptor": true,
   "clustering": true,
-  "helmet_interceptor": true
+  "helmet_interceptor": true,
+  "rateLimiting": true
 }
 ```
 
@@ -90,15 +94,19 @@ The values are used as follows:
 - `encryption_Interceptor` — enables the custom encryption middleware from `interceptors/encryption.interceptor.js`
 - `logger_interceptor` — enables the request logger from `interceptors/logger.interceptor.js`
 - `helmet_interceptor` — enables Helmet security headers via `interceptors/helmet.interceptor.js`
+- `rateLimiting` — enables request rate limiting via `interceptors/rate.limiting.interceptor.js`
 - `clustering` — enables the Node.js cluster process manager, which forks worker processes and lets only the worker bind the Express server port
 
 ### Middleware loading
 
 `middleware.loader.js` centralizes Express middleware setup. The exported
-`middleware(app)` function always registers CORS and JSON request parsing, then
-registers the encryption and logger interceptors when their respective
-configuration flags are enabled. The exported `errorMiddleware(app)` function
-registers the error interceptor only when `errorInterceptor` is enabled.
+`middleware(app)` function registers optional Helmet security headers when
+`helmet_interceptor` is enabled, then always registers CORS and JSON request
+parsing, then registers the encryption and logger interceptors when their
+respective configuration flags are enabled, and finally registers the rate
+limiting interceptor when `rateLimiting` is enabled. The exported
+`errorMiddleware(app)` function registers the error interceptor only when
+`errorInterceptor` is enabled.
 
 The loader gets Express and CORS from `dependency.map.js` and the interceptor
 functions from `interceptor.map.js`. `index.js` calls `middleware(app)` during
@@ -134,6 +142,34 @@ Example `json/helmet.config.json`:
   }
 }
 ```
+
+## Rate limiting
+
+The Express API supports optional request rate limiting. Enable it in
+`json/config.json` with `rateLimiting: true`. The middleware is implemented in
+`interceptors/rate.limiting.interceptor.js` and uses
+[`express-rate-limit`](https://github.com/express-rate-limit/express-rate-limit).
+
+Tuning values live in `json/rate-limiting.config.json`:
+
+```json
+{
+  "windowMs": 900000,
+  "limit": 100,
+  "standardHeaders": true,
+  "legacyHeaders": false
+}
+```
+
+- `windowMs` — length of the rate-limit window in milliseconds (900000 = 15 minutes)
+- `limit` — maximum number of requests allowed per client IP within each window
+- `standardHeaders` — when `true`, sends `RateLimit-*` response headers
+- `legacyHeaders` — when `true`, sends older `X-RateLimit-*` headers instead
+
+Clients that exceed `limit` within `windowMs` receive HTTP **429 Too Many
+Requests**. Rate limiting applies only to the Express app (`index.js`), not the
+reverse proxy (`proxy.js`). With clustering enabled, each worker process tracks
+limits separately using the default in-memory store.
 
 ### File logging and excluded fields
 
@@ -268,7 +304,8 @@ This project includes an optional encryption interceptor, which can be enabled t
   "encryption_Interceptor": true,
   "logger_interceptor": true,
   "clustering": true,
-  "helmet_interceptor": true
+  "helmet_interceptor": true,
+  "rateLimiting": true
 }
 ```
 
@@ -296,10 +333,14 @@ It is not designed for production use without additional hardening, such as:
 - HTTPS/TLS encryption
 - authentication
 - request validation
-- rate limiting
 - production-safe logging and monitoring
 - environment variables
 - proper error handling for real deployments
+
+Optional rate limiting is enabled by default in `json/config.json` for learning;
+production deployments may need stricter limits, a shared store (for example
+Redis), or rate limiting at the proxy or gateway layer. The reverse proxy entry
+point does not apply these limits.
 
 ## Scripts
 
