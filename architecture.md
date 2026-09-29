@@ -89,14 +89,15 @@ The reverse proxy is a Node.js `http` server. It does not use Express; it create
 - target port: `TARGET_PORT`
 - proxy listening port: `proxyPort`
 
-The proxy:
+The proxy imports `http` from `dependency.map.js` and reads `PROXY_TIMEOUT`, `HEADERS_TIMEOUT`, and `KEEP_ALIVE_TIMEOUT` from `json/app.json`.
 
 1. optionally runs the shared rate limiting layer when `rateLimiting` is true (429 and no forward if the limit is exceeded)
-2. reads the request URL, method, and headers
-3. builds outbound request options
-4. opens a connection to the target backend
-5. copies the backend response back to the original client
-6. returns `502 Bad Gateway` if the target cannot be reached
+2. reads the request URL, method, and headers and pipes the body to an outbound `http.request` toward `host`:`port`
+3. optionally applies `PROXY_TIMEOUT` to the upstream request socket when `ENABLE_UPSTREAM_REQUEST_TIMEOUT` is true (504 `Gateway Timeout` on expiry)
+4. streams the upstream response to the client; optionally applies `PROXY_TIMEOUT` to the upstream response when `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` is true (504 on expiry)
+5. returns `502 Bad Gateway` if the upstream request errors
+6. destroys the upstream request if the client aborts or the client request errors
+7. before `listen`, optionally sets `server.headersTimeout` and `server.keepAliveTimeout` when `ENABLE_CLIENT_HEADERS_TIMEOUT` and `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` are true
 
 This is a classic simple reverse proxy pattern and is useful for learning how request forwarding works without a specialized proxy framework.
 
@@ -129,7 +130,7 @@ This function registers shared application-level middleware in order:
 - optional request logger
 - optional response logger (`interceptors/response.interceptor.js`)
 
-Rate limiting is intentionally **not** registered here; it runs on the reverse proxy when `rateLimiting` is true (see §6.5 and `proxy.js`).
+Rate limiting is intentionally **not** registered here; it runs on the reverse proxy when `rateLimiting` is true (see §6.7 and `proxy.js`).
 
 The logic is intentionally centralized so the Express app remains simple and feature flags are easy to manage.
 
@@ -144,8 +145,10 @@ This function enables the custom error interceptor only when `errorInterceptor` 
 This file centralizes shared libraries used across the codebase:
 
 - `express`
+- `http`
 - `cors`
 - `helmet`
+- `performance` (`node:perf_hooks`, used by the response logger)
 - `fs`
 - `path`
 - `cluster`
@@ -284,11 +287,14 @@ This file defines connection and service values:
 {
   "host": "0.0.0.0",
   "port": 3000,
-  "proxyPort": 8080
+  "proxyPort": 8080,
+  "PROXY_TIMEOUT": 30000,
+  "HEADERS_TIMEOUT": 10000,
+  "KEEP_ALIVE_TIMEOUT": 5000
 }
 ```
 
-It is also used for encryption-related settings and target backend address information.
+It is also used for encryption-related settings. For `proxy.js`, `host` and `port` are the upstream target; timeout fields supply millisecond values paired with `ENABLE_*` flags in `json/config.json`.
 
 ### `json/config.json`
 
@@ -303,11 +309,15 @@ This file toggles middleware behavior:
   "rateLimiting": true,
   "requestId": true,
   "response_interceptor": true,
-  "clustering": true
+  "clustering": true,
+  "ENABLE_UPSTREAM_REQUEST_TIMEOUT": true,
+  "ENABLE_UPSTREAM_RESPONSE_TIMEOUT": true,
+  "ENABLE_CLIENT_HEADERS_TIMEOUT": true,
+  "ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT": true
 }
 ```
 
-These flags decide which optional services are enabled during app startup. The `helmet_interceptor` flag enables the Helmet security header middleware, `requestId` enables request ID middleware on the Express app, `response_interceptor` enables response summary logging, `rateLimiting` enables the shared rate limiting layer on the reverse proxy only, and the `clustering` flag activates the primary/worker process model used by `interceptors/cluster.interceptor.js`.
+These flags decide which optional services are enabled during app startup. Express-related flags (`helmet_interceptor`, `requestId`, `response_interceptor`, interceptors, `clustering`) apply to `index.js`. Proxy-only flags are `rateLimiting` and the four `ENABLE_*` timeout toggles (durations in `json/app.json`).
 
 ### `json/logger.config.json`
 
@@ -380,12 +390,14 @@ Read request metadata
   ↓
 Send outbound HTTP request to target host:port
   ↓
+(Optional upstream request/response timeouts → 504)
+  ↓
 Stream response back to client
   ↓
 Client
 ```
 
-If the target backend is unreachable, the proxy returns a `502 Bad Gateway` response.
+If the target backend is unreachable, the proxy returns `502 Bad Gateway`. Upstream timeouts return `504 Gateway Timeout` when the corresponding `ENABLE_UPSTREAM_*` flags are enabled.
 
 ## 9. Persistence and File Utilities
 
@@ -416,6 +428,7 @@ This is a simple, local-file logging mechanism appropriate for development use.
 - no authentication or authorization
 - no validation layer
 - proxy rate limiting is in-memory in the proxy process only; Express is not rate-limited by this flag, and multiple proxy instances do not share counters
+- proxy timeout and keep-alive behavior are basic; no retries or structured timeout metrics
 - no environment-based configuration management
 - custom encryption is not production-grade
 - no automated tests configured

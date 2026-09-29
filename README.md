@@ -61,6 +61,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 - Optional Helmet-based security headers middleware
 - Optional per-request `X-Request-ID` on the Express API (propagate or generate UUID)
 - Optional per-IP rate limiting via a shared in-memory layer on the reverse proxy (JSON-tuned)
+- Optional proxy upstream timeouts (504 Gateway Timeout) and client connection timeouts
 - Optional worker clustering through Node.js `cluster` module
 - Easy host/port configuration through JSON files
 
@@ -72,15 +73,23 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 {
   "host": "0.0.0.0",
   "port": 3000,
-  "proxyPort": 8080
+  "proxyPort": 8080,
+  "PROXY_TIMEOUT": 30000,
+  "HEADERS_TIMEOUT": 10000,
+  "KEEP_ALIVE_TIMEOUT": 5000
 }
 ```
 
 The values are used as follows:
 
-- `host` — bind address for the servers
-- `port` — Express app port
-- `proxyPort` — reverse proxy port
+- `host` — bind address for the servers and the proxy’s upstream target host (`proxy.js` forwards to this host)
+- `port` — Express app port (also the upstream target port for the proxy)
+- `proxyPort` — reverse proxy listen port
+- `PROXY_TIMEOUT` — milliseconds used for upstream request/response socket timeouts when the matching flags in `json/config.json` are enabled
+- `HEADERS_TIMEOUT` — `server.headersTimeout` on the proxy when `ENABLE_CLIENT_HEADERS_TIMEOUT` is true
+- `KEEP_ALIVE_TIMEOUT` — `server.keepAliveTimeout` on the proxy when `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` is true
+
+The same file also holds encryption-related fields used by `interceptors/encryption.interceptor.js` (`secretKey`, `algorithm`, and related keys).
 
 ### `json/config.json`
 
@@ -93,7 +102,11 @@ The values are used as follows:
   "helmet_interceptor": true,
   "rateLimiting": true,
   "requestId": true,
-  "response_interceptor": true
+  "response_interceptor": true,
+  "ENABLE_UPSTREAM_REQUEST_TIMEOUT": true,
+  "ENABLE_UPSTREAM_RESPONSE_TIMEOUT": true,
+  "ENABLE_CLIENT_HEADERS_TIMEOUT": true,
+  "ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT": true
 }
 ```
 
@@ -105,6 +118,10 @@ The values are used as follows:
 - `requestId` — enables request ID middleware from `layers/request.id.layer.js` on the Express app only
 - `response_interceptor` — enables response summary logging from `interceptors/response.interceptor.js` on the Express app
 - `clustering` — enables the Node.js cluster process manager, which forks worker processes and lets only the worker bind the Express server port
+- `ENABLE_UPSTREAM_REQUEST_TIMEOUT` — when true, `proxy.js` applies `PROXY_TIMEOUT` to the outbound upstream request; on timeout the proxy responds with **504** and destroys the upstream socket
+- `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` — when true, applies `PROXY_TIMEOUT` to the upstream response stream; on timeout responds with **504**
+- `ENABLE_CLIENT_HEADERS_TIMEOUT` — when true, sets `server.headersTimeout` to `HEADERS_TIMEOUT` on the proxy
+- `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` — when true, sets `server.keepAliveTimeout` to `KEEP_ALIVE_TIMEOUT` on the proxy
 
 ### Middleware loading
 
@@ -297,13 +314,32 @@ Requests sent to the proxy port are forwarded to the configured backend target d
 
 ## How the Proxy Works
 
-The proxy receives incoming HTTP requests. When `rateLimiting` is enabled, it runs the shared rate limiter first; blocked clients receive 429 without forwarding. Otherwise it creates an outbound request to the configured target service and streams the response back to the client.
+`proxy.js` uses `http` from `dependency.map.js`. It listens on `proxyPort` and forwards to `host`:`port` from `json/app.json` (the Express API by default).
 
-If the target service is unavailable, the proxy returns:
+1. Optional rate limiting (`layers/rate.limiting.layer.js`); over-limit clients get **429** without forwarding.
+2. Pipes the client request to an outbound `http.request` with the same method, path, and headers.
+3. Streams the upstream response back to the client.
 
-```text
-502 Bad Gateway
-```
+**Errors and timeouts**
+
+| Condition | HTTP status | Body (typical) |
+|-----------|-------------|----------------|
+| Upstream connection error | 502 | `Bad Gateway` |
+| Upstream request/response exceeds `PROXY_TIMEOUT` (when enabled) | 504 | `Gateway Timeout` |
+| Client aborts (`req` `"aborted"`) | — | upstream request destroyed; no forced client response |
+
+Optional `server.headersTimeout` and `server.keepAliveTimeout` apply to the client-facing proxy server when the `ENABLE_CLIENT_*` flags are true.
+
+## Proxy timeouts
+
+Timeout durations come from `json/app.json`; toggles are in `json/config.json`:
+
+- **Upstream request** — `ENABLE_UPSTREAM_REQUEST_TIMEOUT` + `PROXY_TIMEOUT`
+- **Upstream response** — `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` + `PROXY_TIMEOUT`
+- **Client headers** — `ENABLE_CLIENT_HEADERS_TIMEOUT` + `HEADERS_TIMEOUT`
+- **Client keep-alive** — `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` + `KEEP_ALIVE_TIMEOUT`
+
+Set any `ENABLE_*` flag to `false` to disable that behavior without changing millisecond values in `app.json`.
 
 ## Error Handling
 
@@ -355,7 +391,11 @@ This project includes an optional encryption interceptor, which can be enabled t
   "helmet_interceptor": true,
   "rateLimiting": true,
   "requestId": true,
-  "response_interceptor": true
+  "response_interceptor": true,
+  "ENABLE_UPSTREAM_REQUEST_TIMEOUT": true,
+  "ENABLE_UPSTREAM_RESPONSE_TIMEOUT": true,
+  "ENABLE_CLIENT_HEADERS_TIMEOUT": true,
+  "ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT": true
 }
 ```
 
@@ -411,6 +451,6 @@ The project is currently configured with the ISC license in `package.json`.
 - add `.env` support for configuration
 - redact sensitive data and use a configurable logging framework
 - add health check endpoints
-- add proper proxy error handling and retries
+- add proxy retries and richer timeout metrics
 - add automated tests
 - add production-ready security hardening

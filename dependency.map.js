@@ -2,6 +2,7 @@ const { performance } = require("node:perf_hooks");
 
 module.exports = {
   express: require("express"),
+  http: require("http"),
   cors: require("cors"),
   fs: require("fs"),
   path: require("path"),
