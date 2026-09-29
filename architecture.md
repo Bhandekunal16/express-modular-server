@@ -35,8 +35,9 @@ Proxy Server
 ├── core/
 │   └── file.functions.js       # Log file writing helper
 ├── layers/
-│   ├── rate.limiting.layer.js  # Per-IP rate limiting (proxy)
-│   └── request.id.layer.js     # X-Request-ID (Express)
+│   ├── rate.limiting.layer.js      # Per-IP rate limiting (proxy)
+│   ├── request.id.layer.js         # X-Request-ID (Express)
+│   └── graceful.shutdown.layer.js  # SIGTERM/SIGINT shutdown (proxy + Express + cluster)
 ├── interceptors/
 │   ├── cluster.interceptor.js   # Worker supervisor for clustering
 │   ├── encryption.interceptor.js # Optional decrypt/encrypt middleware
@@ -68,10 +69,10 @@ The server performs the following steps:
 
 1. creates an Express application instance
 2. registers base middleware through `middleware(app)`
-3. defines a root route at `GET /`
-4. defines a 404 fallback route
-5. registers the optional error interceptor
-6. listens on the configured port and host
+3. registers middleware that tracks in-flight responses in a `Set` (for graceful shutdown)
+4. defines a root route at `GET /` and a 404 fallback route
+5. if `clustering` and primary: runs `clusterInterceptor()` and `registerClusterPrimaryShutdown()` (no HTTP server)
+6. otherwise: registers `errorMiddleware(app)`, calls `app.listen()`, and registers `gracefulShutdown()` on the returned server; cluster workers also listen for a `shutdown` IPC message from the primary
 
 The root route responds with a simple JSON payload:
 
@@ -89,15 +90,17 @@ The reverse proxy is a Node.js `http` server. It does not use Express; it create
 - target port: `TARGET_PORT`
 - proxy listening port: `proxyPort`
 
-The proxy imports `http` from `dependency.map.js` and reads `PROXY_TIMEOUT`, `HEADERS_TIMEOUT`, and `KEEP_ALIVE_TIMEOUT` from `json/app.json`.
+The proxy imports `http` from `dependency.map.js` and reads `PROXY_TIMEOUT`, `HEADERS_TIMEOUT`, `KEEP_ALIVE_TIMEOUT`, and `SHUTDOWN_TIMEOUT` from `json/app.json`.
 
-1. optionally runs the shared rate limiting layer when `rateLimiting` is true (429 and no forward if the limit is exceeded)
-2. reads the request URL, method, and headers and pipes the body to an outbound `http.request` toward `host`:`port`
-3. optionally applies `PROXY_TIMEOUT` to the upstream request socket when `ENABLE_UPSTREAM_REQUEST_TIMEOUT` is true (504 `Gateway Timeout` on expiry)
-4. streams the upstream response to the client; optionally applies `PROXY_TIMEOUT` to the upstream response when `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` is true (504 on expiry)
-5. returns `502 Bad Gateway` if the upstream request errors
-6. destroys the upstream request if the client aborts or the client request errors
-7. before `listen`, optionally sets `server.headersTimeout` and `server.keepAliveTimeout` when `ENABLE_CLIENT_HEADERS_TIMEOUT` and `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` are true
+1. returns **503** `Service Unavailable` when graceful shutdown has started (`isShuttingDown()`)
+2. optionally runs the shared rate limiting layer when `rateLimiting` is true (429 and no forward if the limit is exceeded)
+3. reads the request URL, method, and headers and pipes the body to an outbound `http.request` toward `host`:`port`, tracking each upstream `proxyReq` in a `Set` until `close`
+4. optionally applies `PROXY_TIMEOUT` to the upstream request socket when `ENABLE_UPSTREAM_REQUEST_TIMEOUT` is true (504 `Gateway Timeout` on expiry)
+5. streams the upstream response to the client; optionally applies `PROXY_TIMEOUT` to the upstream response when `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` is true (504 on expiry)
+6. returns `502 Bad Gateway` if the upstream request errors
+7. destroys the upstream request if the client aborts or the client request errors
+8. before `listen`, optionally sets `server.headersTimeout` and `server.keepAliveTimeout` when `ENABLE_CLIENT_HEADERS_TIMEOUT` and `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` are true
+9. after `listen`, registers `gracefulShutdown()` from `layers/graceful.shutdown.layer.js` with `activeRequests` set to the upstream request tracker
 
 This is a classic simple reverse proxy pattern and is useful for learning how request forwarding works without a specialized proxy framework.
 
@@ -110,9 +113,21 @@ The supervisor process:
 - checks whether it is the primary process
 - determines the number of available CPU cores
 - forks one worker per core
-- listens for worker exits and restarts a replacement worker
+- listens for worker exits and restarts a replacement worker unless `markClusterShuttingDown()` has been called during graceful shutdown
 
 The actual HTTP server is not started in the primary process. Instead, the workers bind to the configured port, allowing the app to distribute incoming work across multiple processes.
+
+### 3.4 Graceful shutdown (`layers/graceful.shutdown.layer.js`)
+
+Shared shutdown logic used by `proxy.js` and `index.js`:
+
+| Role | Behavior |
+|------|----------|
+| Proxy | `server.close()`, 503 for new requests while draining, wait for active upstream `proxyReq`, `exit(0)` or force-destroy and `exit(1)` after `SHUTDOWN_TIMEOUT` |
+| Express worker / standalone | `server.close()`, track active `res` until `finish`/`close`, same timeout and exit codes |
+| Cluster primary | `registerClusterPrimaryShutdown()`: IPC `shutdown` to workers, wait for worker exits, `worker.kill()` on timeout; no HTTP server |
+
+`SIGTERM` and `SIGINT` handlers are registered once per process and are idempotent. `interceptor.map.js` exports `markClusterShuttingDown` from `cluster.interceptor.js`.
 
 ## 4. Middleware Composition
 
@@ -167,6 +182,7 @@ This file maps logical middleware names to concrete implementation modules:
 - `helmetInterceptor`
 - `requestIdInterceptor` (implemented in `layers/request.id.layer.js`)
 - `responseInterceptor`
+- `markClusterShuttingDown` (from `cluster.interceptor.js`, used during cluster primary shutdown)
 
 This creates a single place where middleware can be registered or extended without changing multiple import sites.
 
@@ -272,10 +288,16 @@ It:
 
 - checks whether the current runtime is the primary process
 - forks one child process per CPU core
-- restarts workers when they terminate
+- restarts workers when they terminate unless `clusterShuttingDown` is set via `markClusterShuttingDown()`
 - leaves the actual application startup to the worker instances
 
 This is a multi-process scaling pattern for local concurrency experiments rather than a production load-balancing strategy.
+
+### 6.9 Graceful shutdown layer
+
+File: `layers/graceful.shutdown.layer.js`
+
+Exports `gracefulShutdown()`, `triggerGracefulShutdown()`, `isShuttingDown()`, `registerClusterPrimaryShutdown()`, and `registerWorkerShutdownMessage()`. Uses `SHUTDOWN_TIMEOUT` from `json/app.json`. Destroys remaining tracked sockets (upstream `ClientRequest` or `res.socket`) when the shutdown deadline expires.
 
 ## 7. Configuration Model
 
@@ -292,11 +314,12 @@ This file defines connection and service values:
   "proxyPort": 8080,
   "PROXY_TIMEOUT": 30000,
   "HEADERS_TIMEOUT": 10000,
-  "KEEP_ALIVE_TIMEOUT": 5000
+  "KEEP_ALIVE_TIMEOUT": 5000,
+  "SHUTDOWN_TIMEOUT": 10000
 }
 ```
 
-It is also used for encryption-related settings. For `proxy.js`, `host` and `port` are the upstream target; timeout fields supply millisecond values paired with `ENABLE_*` flags in `json/config.json`.
+It is also used for encryption-related settings. For `proxy.js`, `host` and `port` are the upstream target; timeout fields supply millisecond values paired with `ENABLE_*` flags in `json/config.json`. `SHUTDOWN_TIMEOUT` bounds graceful shutdown for the proxy, each Express worker, and cluster primary worker coordination.
 
 ### `json/config.json`
 
@@ -399,7 +422,21 @@ Stream response back to client
 Client
 ```
 
-If the target backend is unreachable, the proxy returns `502 Bad Gateway`. Upstream timeouts return `504 Gateway Timeout` when the corresponding `ENABLE_UPSTREAM_*` flags are enabled.
+If the target backend is unreachable, the proxy returns `502 Bad Gateway`. Upstream timeouts return `504 Gateway Timeout` when the corresponding `ENABLE_UPSTREAM_*` flags are enabled. During shutdown, new proxy requests receive `503 Service Unavailable`.
+
+### Graceful shutdown sequence
+
+```text
+SIGTERM / SIGINT
+  ↓
+Proxy OR Express worker OR Cluster primary
+  ↓
+(stop accepting / notify workers)
+  ↓
+Drain active requests (up to SHUTDOWN_TIMEOUT)
+  ↓
+exit(0)  OR  force destroy + exit(1)
+```
 
 ## 9. Persistence and File Utilities
 
@@ -423,6 +460,7 @@ This is a simple, local-file logging mechanism appropriate for development use.
 - clear separation between API server and reverse proxy
 - feature toggles make experimentation simple
 - good learning tool for Node.js HTTP, Express, and proxy fundamentals
+- graceful shutdown hooks for proxy and clustered Express workers
 
 ### Limitations
 
@@ -442,7 +480,7 @@ This project follows a deliberately simple layered architecture:
 - entry points for each runtime service
 - a central middleware loader
 - pluggable interceptors
-- shared `layers/` modules (rate limiting on the proxy; request IDs on Express)
+- shared `layers/` modules (rate limiting and graceful shutdown on the proxy; request IDs and shutdown on Express)
 - JSON-based configuration
 - minimal helper utilities
 - raw Node.js proxying for request forwarding

@@ -5,6 +5,7 @@
   "PROXY_TIMEOUT": 30000,
   "HEADERS_TIMEOUT": 10000,
   "KEEP_ALIVE_TIMEOUT": 5000,
+  "SHUTDOWN_TIMEOUT": 10000,
   "secretKey": "robotic",
   "ENCODED_KEY": "base64",
   "encryption_algorithm": "aes-256-cbc",

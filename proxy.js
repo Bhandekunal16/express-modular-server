@@ -7,6 +7,7 @@ const {
   PROXY_TIMEOUT,
   HEADERS_TIMEOUT,
   KEEP_ALIVE_TIMEOUT,
+  SHUTDOWN_TIMEOUT,
 } = require("./json/app.json");
 
 const {
@@ -19,7 +20,33 @@ const {
 
 const rateLimiter = require("./layers/rate.limiting.layer");
 
+const {
+  gracefulShutdown,
+  isShuttingDown,
+} = require("./layers/graceful.shutdown.layer");
+
+const activeProxyRequests = new Set();
+
+function untrackProxyRequest(proxyReq) {
+  activeProxyRequests.delete(proxyReq);
+}
+
+function trackProxyRequest(proxyReq) {
+  activeProxyRequests.add(proxyReq);
+  proxyReq.once("close", () => untrackProxyRequest(proxyReq));
+}
+
 const server = http.createServer((req, res) => {
+  if (isShuttingDown()) {
+    if (!res.headersSent) {
+      res.writeHead(503, { "Content-Type": "text/plain" });
+    }
+    if (!res.writableEnded) {
+      res.end("Service Unavailable");
+    }
+    return;
+  }
+
   if (rateLimiting && !rateLimiter(req, res)) {
     return;
   }
@@ -51,6 +78,8 @@ const server = http.createServer((req, res) => {
     res.writeHead(statusCode, headers);
     proxyRes.pipe(res);
   });
+
+  trackProxyRequest(proxyReq);
 
   if (ENABLE_UPSTREAM_REQUEST_TIMEOUT) {
     proxyReq.setTimeout(PROXY_TIMEOUT, () => {
@@ -90,4 +119,11 @@ if (ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT)
 
 server.listen(proxyPort, TARGET_HOST, () => {
   console.log(`http://${TARGET_HOST}:${proxyPort}`);
+});
+
+gracefulShutdown({
+  server,
+  name: "Proxy",
+  shutdownTimeout: SHUTDOWN_TIMEOUT,
+  activeRequests: activeProxyRequests,
 });

@@ -1,12 +1,36 @@
 const { express, cluster } = require("./dependency.map");
-const { clusterInterceptor } = require("./interceptor.map");
-const { host, port } = require("./json/app.json");
+const {
+  clusterInterceptor,
+  markClusterShuttingDown,
+} = require("./interceptor.map");
+const { host, port, SHUTDOWN_TIMEOUT } = require("./json/app.json");
 const { clustering } = require("./json/config.json");
 const { middleware, errorMiddleware } = require("./middleware.loader");
+const {
+  gracefulShutdown,
+  registerClusterPrimaryShutdown,
+  registerWorkerShutdownMessage,
+  triggerGracefulShutdown,
+} = require("./layers/graceful.shutdown.layer");
 
 const app = express();
 
 middleware(app);
+
+const activeRequests = new Set();
+
+app.use((req, res, next) => {
+  activeRequests.add(res);
+
+  const release = () => {
+    activeRequests.delete(res);
+  };
+
+  res.once("finish", release);
+  res.once("close", release);
+
+  next();
+});
 
 app.get("/", (_, res) => {
   res.json({
@@ -24,10 +48,32 @@ app.use((_, res) => {
 
 if (clustering && cluster.isPrimary) {
   clusterInterceptor();
+  registerClusterPrimaryShutdown({
+    shutdownTimeout: SHUTDOWN_TIMEOUT,
+    markClusterShuttingDown,
+  });
 } else {
   errorMiddleware(app);
 
-  app.listen(port, host, () => {
+  const server = app.listen(port, host, () => {
     console.log(`http://${host}:${port}`);
   });
+
+  const serverName = clustering ? "Express worker" : "Express";
+
+  gracefulShutdown({
+    server,
+    name: serverName,
+    shutdownTimeout: SHUTDOWN_TIMEOUT,
+    activeRequests,
+    onShutdown: () => {
+      console.log(`${serverName}: shutdown started`);
+    },
+  });
+
+  if (clustering) {
+    registerWorkerShutdownMessage(() => {
+      triggerGracefulShutdown("shutdown");
+    });
+  }
 }

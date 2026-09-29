@@ -34,7 +34,8 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 │   └── file.functions.js
 ├── layers/
 │   ├── rate.limiting.layer.js
-│   └── request.id.layer.js
+│   ├── request.id.layer.js
+│   └── graceful.shutdown.layer.js
 ├── interceptors/
 │   ├── cluster.interceptor.js
 │   ├── encryption.interceptor.js
@@ -62,6 +63,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 - Optional per-request `X-Request-ID` on the Express API (propagate or generate UUID)
 - Optional per-IP rate limiting via a shared in-memory layer on the reverse proxy (JSON-tuned)
 - Optional proxy upstream timeouts (504 Gateway Timeout) and client connection timeouts
+- Graceful shutdown on `SIGTERM` / `SIGINT` for the proxy, Express workers, and cluster primary
 - Optional worker clustering through Node.js `cluster` module
 - Easy host/port configuration through JSON files
 
@@ -76,7 +78,8 @@ The app is configured with JSON files under the `json/` folder, which makes it e
   "proxyPort": 8080,
   "PROXY_TIMEOUT": 30000,
   "HEADERS_TIMEOUT": 10000,
-  "KEEP_ALIVE_TIMEOUT": 5000
+  "KEEP_ALIVE_TIMEOUT": 5000,
+  "SHUTDOWN_TIMEOUT": 10000
 }
 ```
 
@@ -88,6 +91,7 @@ The values are used as follows:
 - `PROXY_TIMEOUT` — milliseconds used for upstream request/response socket timeouts when the matching flags in `json/config.json` are enabled
 - `HEADERS_TIMEOUT` — `server.headersTimeout` on the proxy when `ENABLE_CLIENT_HEADERS_TIMEOUT` is true
 - `KEEP_ALIVE_TIMEOUT` — `server.keepAliveTimeout` on the proxy when `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` is true
+- `SHUTDOWN_TIMEOUT` — graceful shutdown deadline (ms) for the proxy, Express workers, and cluster primary coordination (`layers/graceful.shutdown.layer.js`)
 
 The same file also holds encryption-related fields used by `interceptors/encryption.interceptor.js` (`secretKey`, `algorithm`, and related keys).
 
@@ -334,6 +338,7 @@ Requests sent to the proxy port are forwarded to the configured backend target d
 | Upstream connection error | 502 | `Bad Gateway` |
 | Upstream request/response exceeds `PROXY_TIMEOUT` (when enabled) | 504 | `Gateway Timeout` |
 | Client aborts (`req` `"aborted"`) | — | upstream request destroyed; no forced client response |
+| Request received during graceful shutdown | 503 | `Service Unavailable` |
 
 Optional `server.headersTimeout` and `server.keepAliveTimeout` apply to the client-facing proxy server when the `ENABLE_CLIENT_*` flags are true.
 
@@ -347,6 +352,24 @@ Timeout durations come from `json/app.json`; toggles are in `json/config.json`:
 - **Client keep-alive** — `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` + `KEEP_ALIVE_TIMEOUT`
 
 Set any `ENABLE_*` flag to `false` to disable that behavior without changing millisecond values in `app.json`.
+
+## Graceful shutdown
+
+Both `proxy.js` and `index.js` handle `SIGTERM` / `SIGINT` through [`layers/graceful.shutdown.layer.js`](layers/graceful.shutdown.layer.js).
+
+**Proxy:** stops accepting connections (`server.close()`), responds with **503** to new requests while draining, tracks active upstream `proxyReq` sockets, waits up to `SHUTDOWN_TIMEOUT`, then destroys remaining upstream requests and exits `1` on timeout or `0` when idle.
+
+**Express (no cluster):** tracks in-flight responses, `server.close()`, waits for active requests, same timeout/exit behavior.
+
+**Cluster primary:** does not listen for HTTP; on signal it sets `markClusterShuttingDown()` (no worker respawn), sends `shutdown` to each worker, waits for exits or forces `worker.kill()` after `SHUTDOWN_TIMEOUT`.
+
+**Cluster workers:** same HTTP graceful shutdown as standalone Express; also start shutdown when the primary sends a `shutdown` IPC message.
+
+Repeated signals during shutdown are ignored (idempotent).
+
+Typical log lines include `SIGTERM received. Starting graceful shutdown...`, `Proxy: stopping new requests`, `Proxy: waiting for active requests`, `Express worker: shutdown started`, `Cluster primary: shutting down workers`, and `shutdown complete` or `shutdown timeout`.
+
+To test locally, start `node proxy.js` or `node index.js` and run `kill -SIGTERM <pid>` (or press Ctrl+C for `SIGINT`). Deployments should signal the **proxy** and **Express** processes separately because they are separate entry points.
 
 ## Error Handling
 
@@ -378,8 +401,9 @@ When clustering is enabled:
 
 - the primary process acts as a supervisor
 - it forks worker processes based on the available CPU count
-- a worker restarts itself if it exits unexpectedly
+- a worker restarts itself if it exits unexpectedly (unless intentional shutdown is in progress via `markClusterShuttingDown()`)
 - only the worker process binds the Express server port and handles incoming HTTP traffic
+- the primary coordinates graceful shutdown and does not serve HTTP (see **Graceful shutdown**)
 
 This pattern improves concurrency and can help distribute work across CPU cores for local performance testing.
 
