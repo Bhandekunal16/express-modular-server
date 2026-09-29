@@ -1,4 +1,6 @@
-const { performance } = require("node:perf_hooks");
+const { performance } = require("../dependency.map");
+const append = require("../core/file.functions");
+const { WRITE_L0G } = require("../json/config.json");
 
 module.exports = function responseLogger(req, res, next) {
   const start = performance.now();
@@ -11,14 +13,18 @@ module.exports = function responseLogger(req, res, next) {
 
     const { method, originalUrl } = req;
 
-    console.log({
+    const response = {
       requestId: resolvedRequestId,
       method,
       originalUrl,
       statusCode: res.statusCode,
       durationMs: Number(duration.toFixed(2)),
       contentLength: res.getHeader("content-length") || 0,
-    });
+    }
+
+    if (WRITE_L0G) append(JSON.stringify(response, null, 2));
+
+    console.log(response);
   });
 
   next();
