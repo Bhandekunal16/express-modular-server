@@ -1,6 +1,6 @@
 const { performance } = require("../dependency.map");
 const append = require("../core/file.functions");
-const { WRITE_L0G } = require("../json/config.json");
+const { WRITE_L0G } = require("../json/logger.config.json");
 
 module.exports = function responseLogger(req, res, next) {
   const start = performance.now();
@@ -22,7 +22,7 @@ module.exports = function responseLogger(req, res, next) {
       contentLength: res.getHeader("content-length") || 0,
     }
 
-    if (WRITE_L0G) append(JSON.stringify(response, null, 2));
+    if (WRITE_L0G) append(JSON.stringify(response));
 
     console.log(response);
   });
