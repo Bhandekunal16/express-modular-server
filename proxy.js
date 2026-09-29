@@ -43,13 +43,8 @@ const server = http.createServer((req, res) => {
 
         proxyRes.destroy();
 
-        if (!res.headersSent) {
-          res.writeHead(504);
-        }
-
-        if (!res.writableEnded) {
-          res.end("Gateway Timeout");
-        }
+        if (!res.headersSent) res.writeHead(504);
+        if (!res.writableEnded) res.end("Gateway Timeout");
       });
     }
 
@@ -63,26 +58,16 @@ const server = http.createServer((req, res) => {
 
       proxyReq.destroy();
 
-      if (!res.headersSent) {
-        res.writeHead(504);
-      }
-
-      if (!res.writableEnded) {
-        res.end("Gateway Timeout");
-      }
+      if (!res.headersSent) res.writeHead(504);
+      if (!res.writableEnded) res.end("Gateway Timeout");
     });
   }
 
   proxyReq.on("error", (error) => {
     console.error("Proxy error:", error.message);
 
-    if (!res.headersSent) {
-      res.writeHead(502);
-    }
-
-    if (!res.writableEnded) {
-      res.end("Bad Gateway");
-    }
+    if (!res.headersSent) res.writeHead(502);
+    if (!res.writableEnded) res.end("Bad Gateway");
   });
 
   req.on("aborted", () => {
@@ -98,13 +83,10 @@ const server = http.createServer((req, res) => {
   req.pipe(proxyReq);
 });
 
-if (ENABLE_CLIENT_HEADERS_TIMEOUT) {
-  server.headersTimeout = HEADERS_TIMEOUT;
-}
+if (ENABLE_CLIENT_HEADERS_TIMEOUT) server.headersTimeout = HEADERS_TIMEOUT;
 
-if (ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT) {
+if (ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT)
   server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT;
-}
 
 server.listen(proxyPort, TARGET_HOST, () => {
   console.log(`http://${TARGET_HOST}:${proxyPort}`);
