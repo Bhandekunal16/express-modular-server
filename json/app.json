@@ -1,0 +1,11 @@
+{
+  "host": "0.0.0.0",
+  "port": 3000,
+  "proxyPort": 8080,
+  "secretKey": "robotic",
+  "ENCODED_KEY": "base64",
+  "encryption_algorithm": "aes-256-cbc",
+  "algorithm": "sha256",
+  "Unicode_Transformation_Format": "utf8",
+  "randomString": "1234567890123456"
+}

@@ -1,0 +1,4 @@
+{
+  "exclude": ["params", "body"],
+  "WRITE_L0G": true
+}
