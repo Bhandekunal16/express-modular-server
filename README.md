@@ -266,7 +266,9 @@ This project includes an optional encryption interceptor, which can be enabled t
 {
   "errorInterceptor": true,
   "encryption_Interceptor": true,
-  "logger_interceptor": true
+  "logger_interceptor": true,
+  "clustering": true,
+  "helmet_interceptor": true
 }
 ```
 
