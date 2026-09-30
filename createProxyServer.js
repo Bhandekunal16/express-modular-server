@@ -3,6 +3,10 @@ const {
   isShuttingDown: defaultIsShuttingDown,
 } = require("./layers/graceful.shutdown.layer");
 const fallbackProxy = require("./proxy/proxy.request.abort.handler");
+const {
+  updateResponseTimeout,
+  updateRequestTimeout,
+} = require("./proxy/proxy.timeout.handler");
 
 function createProxyServer(config, deps = {}) {
   const { http } = deps.http
@@ -55,14 +59,8 @@ function createProxyServer(config, deps = {}) {
     const proxyReq = http.request(options, (proxyRes) => {
       const { statusCode, headers: upstreamHeaders } = proxyRes;
 
-      if (ENABLE_UPSTREAM_RESPONSE_TIMEOUT) {
-        proxyRes.setTimeout(PROXY_TIMEOUT, () => {
-          proxyRes.destroy();
-
-          if (!res.headersSent) res.writeHead(504);
-          if (!res.writableEnded) res.end("Gateway Timeout");
-        });
-      }
+      if (ENABLE_UPSTREAM_RESPONSE_TIMEOUT)
+        updateResponseTimeout(proxyRes, res, PROXY_TIMEOUT);
 
       res.writeHead(statusCode, upstreamHeaders);
       proxyRes.pipe(res);
@@ -70,14 +68,8 @@ function createProxyServer(config, deps = {}) {
 
     trackProxyRequest(proxyReq);
 
-    if (ENABLE_UPSTREAM_REQUEST_TIMEOUT) {
-      proxyReq.setTimeout(PROXY_TIMEOUT, () => {
-        proxyReq.destroy();
-
-        if (!res.headersSent) res.writeHead(504);
-        if (!res.writableEnded) res.end("Gateway Timeout");
-      });
-    }
+    if (ENABLE_UPSTREAM_REQUEST_TIMEOUT)
+      updateRequestTimeout(proxyReq, res, PROXY_TIMEOUT);
 
     proxyReq.on("error", () => {
       if (!res.headersSent) res.writeHead(502);
