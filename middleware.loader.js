@@ -7,7 +7,7 @@ const {
   helmet_interceptor,
   requestId,
   response_interceptor,
-} = require("./json/config.json");
+} = require("./provider/config.map");
 
 const {
   errorInterceptors,
