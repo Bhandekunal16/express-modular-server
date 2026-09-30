@@ -17,6 +17,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 .
 ├── index.js
 ├── proxy.js
+├── app.process.sh         # start Express + proxy; SIGTERM both when either exits
 ├── createProxyServer.js  # test-only proxy factory
 ├── proxy/
 │   ├── proxy.request.tracker.js
@@ -81,6 +82,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 - Optional per-IP rate limiting via a shared in-memory layer on the reverse proxy (JSON-tuned)
 - Optional proxy upstream timeouts (504 Gateway Timeout) and client connection timeouts
 - Graceful shutdown on `SIGTERM` / `SIGINT` for the proxy, Express workers, and cluster primary
+- Startup and HTTP graceful-shutdown messages through `log-byte` (`logByte` on `provider/dependency.map.js`)
 - Optional worker clustering through Node.js `cluster` module
 - Easy host/port configuration through JSON files
 
@@ -100,7 +102,7 @@ Settings live under `json/` on disk. At runtime,
 {
   "host": "0.0.0.0",
   "port": 3000,
-  "proxyPort": 8080,
+  "proxyPort": 8000,
   "PROXY_TIMEOUT": 30000,
   "HEADERS_TIMEOUT": 10000,
   "KEEP_ALIVE_TIMEOUT": 5000,
@@ -110,7 +112,7 @@ Settings live under `json/` on disk. At runtime,
 
 The values are used as follows:
 
-- `host` — bind address for Express and the proxy listen socket (`server.listen`); outbound proxy requests use `127.0.0.1` when `host` is `0.0.0.0`
+- `host` — bind address for Express and the proxy listen socket (`server.listen`); `proxy.js` also uses this value as the upstream hostname. The test factory in `createProxyServer.js` rewrites `0.0.0.0` to `127.0.0.1` for that upstream hostname
 - `port` — Express app port (**upstream** target for `proxy.js`; must not be confused with `proxyPort`)
 - `proxyPort` — reverse proxy **listen** port only (clients connect here; traffic is forwarded to `port`)
 - `PROXY_TIMEOUT` — milliseconds used for upstream request/response socket timeouts when the matching flags in `json/config.json` are enabled
@@ -354,11 +356,21 @@ node proxy.js
 This server listens on:
 
 ```bash
-http://0.0.0.0:8080
+http://0.0.0.0:8000
 ```
+
+On listen, the proxy logs `Proxy server (http://...)` with `logByte.info`. The Express app logs `Backend server (http://...)` the same way.
 
 Requests sent to the proxy port are forwarded to the backend `host` and `port`
 from `provider/config.map.js` (values defined in `json/app.json`).
+
+### Start both processes
+
+```bash
+bash app.process.sh
+```
+
+The script backgrounds `node index.js` and `node proxy.js`, keeps both PIDs, and waits until either process exits. It then sends `SIGTERM` to both so the remaining process runs graceful shutdown.
 
 ## How the Proxy Works
 
@@ -418,9 +430,20 @@ Both `proxy.js` and `index.js` handle `SIGTERM` / `SIGINT` through [`layers/grac
 
 Repeated signals during shutdown are ignored (idempotent).
 
-Typical log lines include `SIGTERM received. Starting graceful shutdown...`, `Proxy: stopping new requests`, `Proxy: waiting for active requests`, `Express worker: shutdown started`, `Cluster primary: shutting down workers`, and `shutdown complete` or `shutdown timeout`.
+HTTP shutdown (proxy and Express) logs through `logByte`:
 
-To test locally, start `node proxy.js` or `node index.js` and run `kill -SIGTERM <pid>` (or press Ctrl+C for `SIGINT`). Deployments should signal the **proxy** and **Express** processes separately because they are separate entry points.
+| Level | Message |
+|-------|---------|
+| `error` | `{signal} received. Starting graceful shutdown...` |
+| `error` | `{name}: stopping new requests` |
+| `warn` | `Express: shutdown started` or `Express worker: shutdown started` (`index.js` `onShutdown`) |
+| `debug` | `{name}: waiting for active requests` |
+| `error` | `{name}: destroying {count} active requests` |
+| `error` | `{name}: shutdown timeout` / `server.close error` / `shutdown complete` |
+
+The cluster primary still uses `console.log`: `Cluster primary: shutting down workers`, `Cluster primary: shutdown timeout`, and `Cluster primary: shutdown complete`.
+
+To test locally, start `node proxy.js` or `node index.js` and run `kill -SIGTERM <pid>` (or press Ctrl+C for `SIGINT`). `bash app.process.sh` signals both processes together. Started separately, the proxy and Express processes each need their own signal.
 
 ## Error Handling
 

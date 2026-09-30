@@ -25,6 +25,7 @@ It is not a production-grade security or deployment architecture. It is best sui
 Proxy Server
 ├── index.js                     # Express app entry point
 ├── proxy.js                    # Reverse proxy entry point
+├── app.process.sh              # Background both entry points; SIGTERM both when either exits
 ├── createProxyServer.js        # Test-only reverse proxy factory
 ├── proxy/
 │   ├── proxy.request.tracker.js       # activeRequests Set for graceful shutdown
@@ -47,7 +48,7 @@ Proxy Server
 ├── layers/
 │   ├── rate.limiting.layer.js      # Per-IP rate limiting (proxy)
 │   ├── request.id.layer.js         # X-Request-ID (Express)
-│   └── graceful.shutdown.layer.js  # SIGTERM/SIGINT shutdown (proxy + Express + cluster)
+│   └── graceful.shutdown.layer.js  # SIGTERM/SIGINT shutdown (logByte for HTTP; console for cluster primary)
 ├── interceptors/
 │   ├── cluster.interceptor.js   # Worker supervisor for clustering
 │   ├── encryption.interceptor.js # Optional decrypt/encrypt middleware
@@ -82,6 +83,8 @@ tracking, routes, `errorMiddleware(app)`, cluster primary vs worker branching, `
 middleware and routes for Jest (`bootstrap()` / `registerErrorMiddleware()`), loaded via
 `test/helpers/createTestApp.js` with mocked config.
 
+On listen it logs `Backend server (http://...)` with `logByte.info` from `provider/dependency.map.js` (`log-byte`). Shutdown start is `logByte.warn` (`Express: shutdown started` or `Express worker: shutdown started`).
+
 The root route responds with a simple JSON payload:
 
 ```json
@@ -95,7 +98,7 @@ This keeps the API intentionally minimal while proving the request lifecycle and
 The reverse proxy is a Node.js `http` server defined in `proxy.js`. It loads `provider/config.map.js`, composes `proxy/` helpers with `layers/`, listens on `proxyPort`, and registers graceful shutdown. It does not use Express.
 
 - listen: `proxyPort` on `host` (`TARGET_HOST`)
-- upstream: `port` (`TARGET_PORT`) on `127.0.0.1` when `host` is `0.0.0.0`, otherwise `TARGET_HOST` — never `proxyPort`
+- upstream: `port` (`TARGET_PORT`) on `host` (`TARGET_HOST`) — never `proxyPort`. `createProxyServer.js` rewrites `0.0.0.0` to `127.0.0.1` for tests; `proxy.js` does not
 
 [`createProxyServer.js`](createProxyServer.js) duplicates the handler for Jest integration tests; it is not imported by `proxy.js`.
 
@@ -114,7 +117,7 @@ Request flow (same shape in `proxy.js` and the test factory):
 
 `createProxyServer(config)` takes only the merged config object (no dependency-injection parameter). Tests mock modules such as `layers/rate.limiting.layer` when needed.
 
-In `proxy.js`, `server.headersTimeout` / `server.keepAliveTimeout` are set when the client `ENABLE_CLIENT_*` flags are true, then `gracefulShutdown()` runs with the tracker’s `activeRequests` set.
+In `proxy.js`, `server.headersTimeout` / `server.keepAliveTimeout` are set when the client `ENABLE_CLIENT_*` flags are true, then `gracefulShutdown()` runs with the tracker’s `activeRequests` set. Listen success is `logByte.info` (`Proxy server (http://...)`).
 
 ### 3.3 Cluster Supervisor (`interceptors/cluster.interceptor.js`)
 
@@ -140,6 +143,10 @@ Shared shutdown logic used by `proxy.js` and `index.js`:
 | Cluster primary | `registerClusterPrimaryShutdown()`: IPC `shutdown` to workers, wait for worker exits, `worker.kill()` on timeout; no HTTP server |
 
 `SIGTERM` and `SIGINT` handlers are registered once per process and are idempotent. `provider/interceptor.map.js` exports `markClusterShuttingDown` from `cluster.interceptor.js`.
+
+`runGracefulShutdown` (proxy and Express) writes through `logByte`: `error` for the signal, stop, destroy, timeout, `server.close` errors, and completion; `debug` while waiting for active requests. `index.js` adds `logByte.warn` for `{name}: shutdown started`. `registerClusterPrimaryShutdown` still uses `console.log` for primary coordination messages.
+
+`app.process.sh` starts both entry points in the background and, when either exits, sends `SIGTERM` to both PIDs.
 
 ## 4. Middleware Composition
 
@@ -182,6 +189,7 @@ This file centralizes shared libraries used across the codebase:
 - `path`
 - `cluster`
 - `os`
+- `logByte` (`log-byte`; Express/proxy listen lines and HTTP graceful shutdown)
 
 This acts as a lightweight dependency registry and helps keep import points consistent.
 
@@ -341,7 +349,7 @@ This is a multi-process scaling pattern for local concurrency experiments rather
 
 File: `layers/graceful.shutdown.layer.js`
 
-Exports `gracefulShutdown()`, `triggerGracefulShutdown()`, `isShuttingDown()`, `registerClusterPrimaryShutdown()`, and `registerWorkerShutdownMessage()`. Callers pass `SHUTDOWN_TIMEOUT` from `provider/config.map.js` (defined in `json/app.json`). Destroys remaining tracked sockets (upstream `ClientRequest` or `res.socket`) when the shutdown deadline expires.
+Exports `gracefulShutdown()`, `triggerGracefulShutdown()`, `isShuttingDown()`, `registerClusterPrimaryShutdown()`, and `registerWorkerShutdownMessage()`. Callers pass `SHUTDOWN_TIMEOUT` from `provider/config.map.js` (defined in `json/app.json`). Destroys remaining tracked sockets (upstream `ClientRequest` or `res.socket`) when the shutdown deadline expires. HTTP-path messages use `logByte` from `provider/dependency.map.js`; cluster-primary messages use `console.log`.
 
 ## 7. Configuration Model
 
@@ -357,7 +365,7 @@ This file defines connection and service values:
 {
   "host": "0.0.0.0",
   "port": 3000,
-  "proxyPort": 8080,
+  "proxyPort": 8000,
   "PROXY_TIMEOUT": 30000,
   "HEADERS_TIMEOUT": 10000,
   "KEEP_ALIVE_TIMEOUT": 5000,
@@ -506,7 +514,7 @@ This is a simple, local-file logging mechanism appropriate for development use.
 - clear separation between API server and reverse proxy
 - feature toggles make experimentation simple
 - good learning tool for Node.js HTTP, Express, and proxy fundamentals
-- graceful shutdown hooks for proxy and clustered Express workers
+- graceful shutdown hooks for proxy and clustered Express workers, with `log-byte` on the HTTP path
 
 ### Limitations
 
