@@ -6,7 +6,7 @@ const {
   ENCODED_KEY,
   encryption_algorithm,
   Unicode_Transformation_Format,
-} = require("../json/app.json");
+} = require("../provider/config.map");
 
 class encryption {
   #KEY;

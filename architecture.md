@@ -28,7 +28,7 @@ Proxy Server
 ├── middleware.loader.js        # Central middleware registration
 ├── provider/
 │   ├── dependency.map.js       # Shared dependency registry
-│   ├── config.map.js           # Merged json/config + json/app
+│   ├── config.map.js           # Merged json/* runtime configuration
 │   └── interceptor.map.js    # Middleware and process registry
 ├── architecture.md             # System design documentation
 ├── README.md                   # Project overview and usage
@@ -63,8 +63,8 @@ Proxy Server
 ### 3.1 Express API Server (`index.js`)
 
 The main API server is created with Express and reads `host`, `port`,
-`SHUTDOWN_TIMEOUT`, and `clustering` from `provider/config.map.js` (sourced from
-`json/app.json` and `json/config.json` on disk).
+`SHUTDOWN_TIMEOUT`, and `clustering` from `provider/config.map.js` (merged from
+`json/` files; see §5 and §7).
 
 The server performs the following steps:
 
@@ -92,8 +92,8 @@ The reverse proxy is a Node.js `http` server. It does not use Express; it create
 - proxy listening port: `proxyPort`
 
 The proxy imports `http` from `provider/dependency.map.js` and loads runtime settings from
-`provider/config.map.js`, which merges `json/config.json` and `json/app.json` (same
-spread order as in code: config, then app). Destructured names include
+`provider/config.map.js`, which merges all primary `json/` settings (see
+§5). Destructured names include
 `TARGET_HOST` / `TARGET_PORT` (`host` / `port`), `proxyPort`, `PROXY_TIMEOUT`,
 `HEADERS_TIMEOUT`, `KEEP_ALIVE_TIMEOUT`, `SHUTDOWN_TIMEOUT`, `rateLimiting`, and
 the four `ENABLE_*` timeout toggles.
@@ -197,13 +197,22 @@ This creates a single place where middleware can be registered or extended witho
 ### `provider/config.map.js`
 
 This file mirrors the registry pattern used by `provider/dependency.map.js` and
-`provider/interceptor.map.js`: one import surface for merged configuration. It
-requires `json/config.json` and `json/app.json` and exports their properties as
-a single object (`{ ...config, ...app }`).
+`provider/interceptor.map.js`: one import surface for runtime configuration. It
+loads:
 
-`index.js` and `proxy.js` import listen addresses, shutdown timeouts, clustering,
-and proxy-specific flags from this module. `middleware.loader.js` still requires
-`json/config.json` directly for Express middleware toggles.
+| Source on disk | How it is exported |
+|----------------|-------------------|
+| `json/config.json` | spread onto the export |
+| `json/app.json` | spread (overrides `config` keys on collision) |
+| `json/rate-limiting.config.json` | spread (`windowMs`, `limit`, etc.) |
+| `json/helmet.config.json` | nested as `helmet` (not spread) |
+| `json/logger.config.json` | spread (`exclude`, `WRITE_L0G`, etc.) |
+
+Consumers include `index.js`, `proxy.js`, `middleware.loader.js`,
+`layers/rate.limiting.layer.js`, `interceptors/logger.interceptor.js`,
+`interceptors/response.interceptor.js`, `interceptors/encryption.interceptor.js`,
+and `interceptors/helmet.interceptor.js` (which reads `helmet` from the export).
+Edit the JSON files under `json/` to change behavior; the map module only aggregates them.
 
 ## 6. Optional Interceptors
 
@@ -236,7 +245,9 @@ This middleware is an experimental encryption layer that:
 - replaces `req.body` with the decrypted JSON
 - wraps outgoing `res.json()` responses to encrypt the payload before sending it back
 
-The encryption uses a custom key/IV setup derived from values stored in `json/app.json`, and it is only meant for demonstration. It is not equivalent to TLS/HTTPS and is not secure enough for real production transport.
+The encryption uses a custom key/IV setup derived from fields on
+`provider/config.map.js` (from `json/app.json`). It is only meant for demonstration
+and is not equivalent to TLS/HTTPS or secure enough for real production transport.
 
 ### 6.3 Request Logger
 
@@ -257,7 +268,9 @@ It then writes the sanitized object to either:
 - the console, as one line: `request:` plus `JSON.stringify` of the object
 - a dated log file in `logs/` as a raw JSON line (no `request:` prefix)
 
-The logger is controlled by `json/logger.config.json` and supports excluding sensitive request properties such as `body`, `headers`, `params`, or `query`.
+The logger reads `exclude` and `WRITE_L0G` from `provider/config.map.js`
+(sourced from `json/logger.config.json`) and supports omitting sensitive request
+properties such as `body`, `headers`, `params`, or `query`.
 
 Logged `requestId` is resolved as `req.requestId`, then the incoming `x-request-id` header, then `"N/A"`, so request and response logs stay aligned even when the request ID layer is disabled.
 
@@ -278,7 +291,10 @@ File: `interceptors/helmet.interceptor.js`
 
 This middleware enables Helmet security protections when `helmet_interceptor` is set to `true` in `json/config.json`.
 
-It applies helmet defaults and can read optional policy overrides from `json/helmet.config.json`. This layer adds security headers such as CSP and CORS-related protections without requiring a large framework or custom header logic.
+It passes the `helmet` object from `provider/config.map.js` into the Helmet
+middleware when that object has keys; otherwise it uses Helmet defaults. This
+adds security headers such as CSP and CORS-related protections without custom
+header logic in application routes.
 
 ### 6.6 Request ID
 
@@ -292,7 +308,7 @@ The reverse proxy does not invoke this module. Clients may still send `X-Request
 
 File: `layers/rate.limiting.layer.js`
 
-This is not Express middleware by itself. It is a function `(req, res) => boolean` that tracks request counts per IP in an in-memory `Map`, using `windowMs` and `limit` from `json/rate-limiting.config.json`. It sets `RateLimit-Limit` and `RateLimit-Remaining` on responses. When the limit is exceeded it writes HTTP 429 with `Retry-After` and a JSON error payload, then returns `false`; otherwise it returns `true`.
+This is not Express middleware by itself. It is a function `(req, res) => boolean` that tracks request counts per IP in an in-memory `Map`, using `windowMs` and `limit` from `provider/config.map.js` (from `json/rate-limiting.config.json`). It sets `RateLimit-Limit` and `RateLimit-Remaining` on responses. When the limit is exceeded it writes HTTP 429 with `Retry-After` and a JSON error payload, then returns `false`; otherwise it returns `true`.
 
 - **Reverse proxy only:** `proxy.js` invokes the layer before building the outbound request when `rateLimiting` is true in `json/config.json`.
 
@@ -324,6 +340,8 @@ Exports `gracefulShutdown()`, `triggerGracefulShutdown()`, `isShuttingDown()`, `
 ## 7. Configuration Model
 
 The project relies on JSON configuration files to avoid hard-coded runtime values.
+At runtime, `provider/config.map.js` merges them into one export (see §5); the
+sections below describe each file on disk.
 
 ### `json/app.json`
 
@@ -377,7 +395,7 @@ This file controls logging output and field exclusion.
 }
 ```
 
-The `exclude` array prevents selected request fields from being emitted to the console or file, which is important when handling sensitive data. `WRITE_L0G` also controls whether the response logger writes summaries to the same log files.
+The `exclude` array prevents selected request fields from being emitted to the console or file, which is important when handling sensitive data. `WRITE_L0G` also controls whether the response logger writes summaries to the same log files. Interceptors access these keys through `provider/config.map.js`.
 
 ### `json/rate-limiting.config.json`
 
@@ -392,7 +410,7 @@ This file configures the shared rate limiting layer:
 }
 ```
 
-The layer reads `windowMs` and `limit` only. The committed defaults allow 100 requests per client IP every 15 minutes. The layer always emits `RateLimit-Limit` and `RateLimit-Remaining`; `standardHeaders` and `legacyHeaders` are kept in JSON for forward compatibility but are not used by the current implementation.
+The layer reads `windowMs` and `limit` from `provider/config.map.js` only. The committed defaults allow 100 requests per client IP every 15 minutes. The layer always emits `RateLimit-Limit` and `RateLimit-Remaining`; `standardHeaders` and `legacyHeaders` are kept in JSON for forward compatibility but are not used by the current implementation.
 
 ## 8. Request Flow
 
@@ -503,7 +521,7 @@ This project follows a deliberately simple layered architecture:
 - a central middleware loader
 - pluggable interceptors
 - shared `layers/` modules (rate limiting and graceful shutdown on the proxy; request IDs and shutdown on Express)
-- JSON-based configuration
+- JSON-based configuration aggregated through `provider/config.map.js`
 - minimal helper utilities
 - raw Node.js proxying for request forwarding
 

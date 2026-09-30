@@ -1,4 +1,4 @@
-const { WRITE_L0G, exclude } = require("../json/logger.config.json");
+const { WRITE_L0G, exclude } = require("../provider/config.map");
 const append = require("../core/file.functions");
 
 module.exports = function logger(req, _, next) {

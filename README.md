@@ -71,11 +71,13 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 
 ## Configuration
 
-Settings live in `json/app.json` and `json/config.json` on disk.
-[`provider/config.map.js`](provider/config.map.js) merges the two objects (`config`
-first, then `app`; duplicate keys use the `app` value). `index.js` and `proxy.js`
-import runtime settings from that module; `middleware.loader.js` still reads feature
-flags directly from `json/config.json`.
+Settings live under `json/` on disk. At runtime,
+[`provider/config.map.js`](provider/config.map.js) loads and exports a single object:
+
+- spreads `json/config.json`, then `json/app.json`, then `json/rate-limiting.config.json`, then `json/logger.config.json` (later spreads override earlier keys on collision)
+- attaches `json/helmet.config.json` as the `helmet` property (not spread, so Helmet options do not mix with top-level flags)
+
+`index.js`, `proxy.js`, `middleware.loader.js`, and several interceptors/layers import from this module instead of requiring individual JSON files.
 
 ### `json/app.json`
 
@@ -149,11 +151,10 @@ when `rateLimiting` is true. The exported
 `errorMiddleware(app)` function registers the error interceptor only when
 `errorInterceptor` is enabled.
 
-The loader gets Express and CORS from `provider/dependency.map.js` and the
-interceptor functions from `provider/interceptor.map.js`. `index.js` calls
-`middleware(app)` during
-app setup and calls `errorMiddleware(app)` to register the configured error
-handler.
+The loader gets Express and CORS from `provider/dependency.map.js`, feature flags
+from `provider/config.map.js`, and interceptor implementations from
+`provider/interceptor.map.js`. `index.js` calls `middleware(app)` during app
+setup and calls `errorMiddleware(app)` to register the configured error handler.
 
 ## Request Logging
 
@@ -183,9 +184,9 @@ resolution as the request logger, HTTP method, `originalUrl`, `statusCode`,
 and `contentLength` from `res.getHeader("content-length")`. It runs after the
 request logger in `middleware.loader.js` and only on the Express API.
 
-When `WRITE_L0G` is true in `json/logger.config.json`, each response summary is
-also appended as a JSON line under `logs/`, using the same file helper as the
-request logger. The `exclude` array applies only to request logs, not these
+When `WRITE_L0G` is true (from `provider/config.map.js`, defined in
+`json/logger.config.json`), each response summary is also appended as a JSON line
+under `logs/`, using the same file helper as the request logger. The `exclude` array applies only to request logs, not these
 response summaries.
 
 On the console, each summary is prefixed with `response:` followed by
@@ -197,9 +198,11 @@ The project also supports a Helmet-based security interceptor. It is enabled via
 `json/config.json` with `helmet_interceptor: true` and is implemented in
 `interceptors/helmet.interceptor.js`.
 
-The interceptor applies Helmet defaults when the config file is empty, but it can
-also load custom options from `json/helmet.config.json` to tune policies such as
-`contentSecurityPolicy` and `crossOriginResourcePolicy`.
+When `helmet_interceptor` is enabled, `interceptors/helmet.interceptor.js` reads
+the `helmet` object from `provider/config.map.js` (sourced from
+`json/helmet.config.json`). If that object has no keys, Helmet defaults apply;
+otherwise options such as `contentSecurityPolicy` and `crossOriginResourcePolicy`
+are passed through to Helmet.
 
 Example `json/helmet.config.json`:
 
@@ -231,9 +234,10 @@ proxy does not run this layer; it forwards incoming headers as-is, so a client
 ## Rate limiting
 
 Optional per-IP rate limiting is controlled by `rateLimiting` in
-`json/config.json`. The logic lives in `layers/rate.limiting.layer.js`: an
-in-memory counter per client IP (`req.socket.remoteAddress`) with options from
-`json/rate-limiting.config.json`.
+`json/config.json` (via `provider/config.map.js`). The logic lives in
+`layers/rate.limiting.layer.js`: an in-memory counter per client IP
+(`req.socket.remoteAddress`) using `windowMs` and `limit` from the same config map
+(sourced from `json/rate-limiting.config.json`).
 
 ```json
 {
@@ -264,9 +268,10 @@ The proxy process keeps in-memory counters per client IP; limits are not shared 
 
 ### File logging and excluded fields
 
-`json/logger.config.json` controls file output for both the request logger and
-the response logger, and which request properties are omitted from the
-**request** logged object:
+`json/logger.config.json` defines `exclude` and `WRITE_L0G`; interceptors read
+those fields from `provider/config.map.js`. That file controls file output for
+both the request logger and the response logger, and which request properties are
+omitted from the **request** logged object:
 
 ```json
 {
@@ -337,15 +342,14 @@ This server listens on:
 http://0.0.0.0:8080
 ```
 
-Requests sent to the proxy port are forwarded to the backend target from
-`json/app.json` (`host` and `port`), with proxy flags and timeouts merged via
-`provider/config.map.js` at runtime.
+Requests sent to the proxy port are forwarded to the backend `host` and `port`
+from `provider/config.map.js` (values defined in `json/app.json`).
 
 ## How the Proxy Works
 
 `proxy.js` uses `http` from `provider/dependency.map.js` and reads `host`, `port`,
 `proxyPort`, timeout values, and `ENABLE_*` / `rateLimiting` flags from
-`provider/config.map.js` (backed by `json/app.json` and `json/config.json`). It listens
+`provider/config.map.js` (all merged `json/` settings). It listens
 on `proxyPort` and forwards to `host`:`port` (the Express API by default).
 
 1. Optional rate limiting (`layers/rate.limiting.layer.js`); over-limit clients get **429** without forwarding.

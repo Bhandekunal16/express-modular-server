@@ -1,7 +1,7 @@
 const {
   windowMs: WINDOW_MS,
   limit: MAX_REQUESTS,
-} = require("../json/rate-limiting.config.json");
+} = require("../provider/config.map");
 
 const clients = new Map();
 

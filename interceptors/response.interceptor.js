@@ -1,6 +1,6 @@
 const { performance } = require("../provider/dependency.map");
+const { WRITE_L0G } = require("../provider/config.map");
 const append = require("../core/file.functions");
-const { WRITE_L0G } = require("../json/logger.config.json");
 
 module.exports = function responseLogger(req, res, next) {
   const start = performance.now();
