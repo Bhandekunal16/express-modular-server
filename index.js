@@ -75,9 +75,8 @@ if (clustering && cluster.isPrimary) {
     },
   });
 
-  if (clustering) {
+  if (clustering)
     registerWorkerShutdownMessage(() => {
       triggerGracefulShutdown("shutdown");
     });
-  }
 }
