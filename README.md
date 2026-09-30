@@ -110,9 +110,9 @@ Settings live under `json/` on disk. At runtime,
 
 The values are used as follows:
 
-- `host` — bind address for the servers and the proxy’s upstream target host (`proxy.js` forwards to this host)
-- `port` — Express app port (also the upstream target port for the proxy)
-- `proxyPort` — reverse proxy listen port
+- `host` — bind address for Express and the proxy listen socket (`server.listen`); outbound proxy requests use `127.0.0.1` when `host` is `0.0.0.0`
+- `port` — Express app port (**upstream** target for `proxy.js`; must not be confused with `proxyPort`)
+- `proxyPort` — reverse proxy **listen** port only (clients connect here; traffic is forwarded to `port`)
 - `PROXY_TIMEOUT` — milliseconds used for upstream request/response socket timeouts when the matching flags in `json/config.json` are enabled
 - `HEADERS_TIMEOUT` — `server.headersTimeout` on the proxy when `ENABLE_CLIENT_HEADERS_TIMEOUT` is true
 - `KEEP_ALIVE_TIMEOUT` — `server.keepAliveTimeout` on the proxy when `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` is true
@@ -373,8 +373,8 @@ Integration tests build the app via [`test/helpers/createExpressApp.js`](test/he
 and [`test/helpers/createTestApp.js`](test/helpers/createTestApp.js) (quieter middleware flags)
 without starting [`index.js`](index.js).
 
-1. Optional rate limiting (`layers/rate.limiting.layer.js`); over-limit clients get **429** without forwarding.
-2. Pipes the client request to an outbound `http.request` with the same method, path, and headers.
+1. Optional rate limiting (`layers/rate.limiting.layer.js`) on the **proxy listen port**; over-limit clients get **429** without forwarding. Limits are per client IP in the proxy process (restart the proxy to reset counters). Direct requests to Express on `port` are not rate-limited by this flag.
+2. Forwards to **`port`** (API), not `proxyPort`, via `http.request` with the same method, path, and headers.
 3. Each upstream `proxyReq` is tracked in a `Set` via [`proxy/proxy.request.tracker.js`](proxy/proxy.request.tracker.js) for graceful shutdown (`activeRequests`).
 4. Upstream **504** handling when enabled: [`proxy/proxy.timeout.handler.js`](proxy/proxy.timeout.handler.js) (`updateRequestTimeout` / `updateResponseTimeout`).
 5. Upstream connection errors → **502** via [`proxy/proxy.error.handler.js`](proxy/proxy.error.handler.js) (`sendBadGateway`).
@@ -389,6 +389,7 @@ without starting [`index.js`](index.js).
 | Upstream request/response exceeds `PROXY_TIMEOUT` (when enabled) | 504 | `Gateway Timeout` |
 | Client aborts, errors, or early `close` (`proxy.request.abort.handler`) | — | upstream `proxyReq` destroyed; no forced client response |
 | Request received during graceful shutdown | 503 | `Service Unavailable` |
+| Per-IP limit exceeded (`rateLimiting: true`) | 429 | JSON `Too Many Requests` (+ `Retry-After`) |
 
 Optional `server.headersTimeout` and `server.keepAliveTimeout` apply to the client-facing proxy server when the `ENABLE_CLIENT_*` flags are true.
 

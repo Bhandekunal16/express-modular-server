@@ -1,4 +1,4 @@
-const { createProxyRequestTracker } = require("../../../proxy/proxy.request.tracker");
+const createProxyRequestTracker = require("../../../proxy/proxy.request.tracker");
 
 describe("proxy/proxy.request.tracker.js", () => {
   it("tracks proxyReq until close", () => {

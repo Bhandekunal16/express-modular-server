@@ -95,7 +95,7 @@ This keeps the API intentionally minimal while proving the request lifecycle and
 The reverse proxy is a Node.js `http` server defined in `proxy.js`. It loads `provider/config.map.js`, composes `proxy/` helpers with `layers/`, listens on `proxyPort`, and registers graceful shutdown. It does not use Express.
 
 - listen: `proxyPort` on `host` (`TARGET_HOST`)
-- outbound `http.request` uses `hostname: TARGET_HOST` and the `port` field from the options object in `proxy.js` (see that file for the current upstream target)
+- upstream: `port` (`TARGET_PORT`) on `127.0.0.1` when `host` is `0.0.0.0`, otherwise `TARGET_HOST` — never `proxyPort`
 
 [`createProxyServer.js`](createProxyServer.js) duplicates the handler for Jest integration tests; it is not imported by `proxy.js`.
 
@@ -105,7 +105,7 @@ Request flow (same shape in `proxy.js` and the test factory):
 
 1. returns **503** when `isShuttingDown()` is true
 2. optional rate limiting (`layers/rate.limiting.layer.js`) → **429** without forwarding
-3. outbound `http.request` with the same method, path, and headers; `proxy/proxy.request.tracker.js` adds each `proxyReq` to `activeRequests` until `close`
+3. outbound `http.request` to `TARGET_PORT` with the same method, path, and headers; `proxy/proxy.request.tracker.js` (default export factory) adds each `proxyReq` to `activeRequests` until `close`
 4. when `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` is true, `proxy/proxy.timeout.handler.js` → `updateResponseTimeout` (**504** on expiry)
 5. when `ENABLE_UPSTREAM_REQUEST_TIMEOUT` is true, `updateRequestTimeout` on the upstream request (**504** on expiry)
 6. `proxy/proxy.error.handler.js` (`sendBadGateway`) listens for upstream `proxyReq` `"error"` and responds with **502**

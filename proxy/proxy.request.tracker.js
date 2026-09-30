@@ -1,4 +1,4 @@
-function createProxyRequestTracker() {
+module.exports = function createProxyRequestTracker() {
   const activeRequests = new Set();
 
   function track(proxyReq) {
@@ -14,5 +14,3 @@ function createProxyRequestTracker() {
     activeRequests,
   };
 }
-
-module.exports = { createProxyRequestTracker };

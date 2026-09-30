@@ -1,18 +1,3 @@
-const config = require("./provider/config.map");
-const rateLimiter = require("./layers/rate.limiting.layer");
-const {
-  isShuttingDown,
-  gracefulShutdown,
-} = require("./layers/graceful.shutdown.layer");
-const proxyRequestAbortHandler = require("./proxy/proxy.request.abort.handler");
-const {
-  updateResponseTimeout,
-  updateRequestTimeout,
-} = require("./proxy/proxy.timeout.handler");
-const { createProxyRequestTracker } = require("./proxy/proxy.request.tracker");
-const sendBadGateway = require("./proxy/proxy.error.handler");
-const { http } = require("./provider/dependency.map");
-
 const {
   host: TARGET_HOST,
   port: TARGET_PORT,
@@ -26,7 +11,21 @@ const {
   ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT,
   ENABLE_UPSTREAM_REQUEST_TIMEOUT,
   ENABLE_UPSTREAM_RESPONSE_TIMEOUT,
-} = config;
+} = require("./provider/config.map");
+
+const { http } = require("./provider/dependency.map");
+const rateLimiter = require("./layers/rate.limiting.layer");
+const {
+  isShuttingDown,
+  gracefulShutdown,
+} = require("./layers/graceful.shutdown.layer");
+const proxyRequestAbortHandler = require("./proxy/proxy.request.abort.handler");
+const {
+  updateResponseTimeout,
+  updateRequestTimeout,
+} = require("./proxy/proxy.timeout.handler");
+const sendBadGateway = require("./proxy/proxy.error.handler");
+const createProxyRequestTracker = require("./proxy/proxy.request.tracker");
 
 const { track, activeRequests } = createProxyRequestTracker();
 
