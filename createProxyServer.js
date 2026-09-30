@@ -4,7 +4,9 @@ const {
 } = require("./layers/graceful.shutdown.layer");
 
 function createProxyServer(config, deps = {}) {
-  const { http } = deps.http ? { http: deps.http } : require("./provider/dependency.map");
+  const { http } = deps.http
+    ? { http: deps.http }
+    : require("./provider/dependency.map");
   const rateLimiter = deps.rateLimiter ?? defaultRateLimiter;
   const isShuttingDownFn = deps.isShuttingDown ?? defaultIsShuttingDown;
 
@@ -30,7 +32,8 @@ function createProxyServer(config, deps = {}) {
 
   const server = http.createServer((req, res) => {
     if (isShuttingDownFn()) {
-      if (!res.headersSent) res.writeHead(503, { "Content-Type": "text/plain" });
+      if (!res.headersSent)
+        res.writeHead(503, { "Content-Type": "text/plain" });
       if (!res.writableEnded) res.end("Service Unavailable");
 
       return;

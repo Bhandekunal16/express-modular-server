@@ -1,7 +1,7 @@
 const { middleware, errorMiddleware } = require("./middleware.loader");
+const { express } = require("./provider/dependency.map");
 
 function createExpressApp() {
-  const { express } = require("./provider/dependency.map");
   const app = express();
 
   middleware(app);
