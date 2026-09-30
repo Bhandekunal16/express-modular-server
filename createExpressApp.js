@@ -1,7 +1,7 @@
 const { middleware, errorMiddleware } = require("./middleware.loader");
 const { express } = require("./provider/dependency.map");
 
-function createExpressApp() {
+function bootstrap() {
   const app = express();
 
   middleware(app);
@@ -42,4 +42,4 @@ function registerErrorMiddleware(app) {
   errorMiddleware(app);
 }
 
-module.exports = { createExpressApp, registerErrorMiddleware };
+module.exports = { bootstrap, registerErrorMiddleware };

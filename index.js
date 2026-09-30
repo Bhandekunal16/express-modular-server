@@ -9,7 +9,7 @@ const {
   SHUTDOWN_TIMEOUT,
   clustering,
 } = require("./provider/config.map");
-const { createExpressApp, registerErrorMiddleware } = require("./createExpressApp");
+const { bootstrap, registerErrorMiddleware } = require("./createExpressApp");
 const {
   gracefulShutdown,
   registerClusterPrimaryShutdown,
@@ -24,7 +24,7 @@ if (clustering && cluster.isPrimary) {
     markClusterShuttingDown,
   });
 } else {
-  const { app, activeRequests } = createExpressApp();
+  const { app, activeRequests } = bootstrap();
 
   registerErrorMiddleware(app);
 
