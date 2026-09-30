@@ -31,16 +31,8 @@ const { track, activeRequests } = createProxyRequestTracker();
 
 const server = http.createServer((req, res) => {
   if (isShuttingDown()) {
-    if (!res.headersSent) {
-      res.writeHead(503, {
-        "Content-Type": "text/plain",
-      });
-    }
-
-    if (!res.writableEnded) {
-      res.end("Service Unavailable");
-    }
-
+    if (!res.headersSent) res.writeHead(503, { "Content-Type": "text/plain" });
+    if (!res.writableEnded) res.end("Service Unavailable");
     return;
   }
 
@@ -61,23 +53,19 @@ const server = http.createServer((req, res) => {
   const proxyReq = http.request(options, (proxyRes) => {
     const { statusCode, headers: upstreamHeaders } = proxyRes;
 
-    if (ENABLE_UPSTREAM_RESPONSE_TIMEOUT) {
+    if (ENABLE_UPSTREAM_RESPONSE_TIMEOUT)
       updateResponseTimeout(proxyRes, res, PROXY_TIMEOUT);
-    }
 
     res.writeHead(statusCode, upstreamHeaders);
-
     proxyRes.pipe(res);
   });
 
   track(proxyReq);
 
-  if (ENABLE_UPSTREAM_REQUEST_TIMEOUT) {
+  if (ENABLE_UPSTREAM_REQUEST_TIMEOUT)
     updateRequestTimeout(proxyReq, res, PROXY_TIMEOUT);
-  }
 
   sendBadGateway(proxyReq, res);
-
   proxyRequestAbortHandler(req, proxyReq);
 
   req.pipe(proxyReq);
