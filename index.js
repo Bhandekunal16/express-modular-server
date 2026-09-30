@@ -1,4 +1,4 @@
-const { express, cluster } = require("./dependency.map");
+const { express, cluster } = require("./provider/dependency.map");
 const {
   clusterInterceptor,
   markClusterShuttingDown,
