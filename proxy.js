@@ -83,13 +83,10 @@ const server = http.createServer((req, res) => {
   req.pipe(proxyReq);
 });
 
-if (ENABLE_CLIENT_HEADERS_TIMEOUT) {
-  server.headersTimeout = HEADERS_TIMEOUT;
-}
+if (ENABLE_CLIENT_HEADERS_TIMEOUT) server.headersTimeout = HEADERS_TIMEOUT;
 
-if (ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT) {
+if (ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT)
   server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT;
-}
 
 server.listen(proxyPort, TARGET_HOST, () => {
   logByte.info(`Proxy server (http://${TARGET_HOST}:${proxyPort})`);
