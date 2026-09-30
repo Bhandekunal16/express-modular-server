@@ -6,7 +6,7 @@ A lightweight Node.js project that runs a small Express API and a reverse proxy.
 
 This project contains two separate server entry points:
 
-- `index.js` — runs the Express app
+- `index.js` — runs the Express app (production entry)
 - `proxy.js` — runs the HTTP reverse proxy
 
 The app is configured with JSON files under the `json/` folder, which makes it easy to adjust the host and port values without changing code.
@@ -17,8 +17,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 .
 ├── index.js
 ├── proxy.js
-├── createExpressApp.js   # exports bootstrap() for Express app wiring
-├── createProxyServer.js
+├── createProxyServer.js  # test-only proxy factory
 ├── proxy/
 │   ├── proxy.request.tracker.js
 │   ├── proxy.timeout.handler.js
@@ -30,6 +29,8 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 │   ├── unit/
 │   ├── integration/
 │   ├── helpers/
+│   │   ├── createExpressApp.js
+│   │   └── createTestApp.js
 │   ├── fixtures/
 │   └── setup/
 ├── provider/
@@ -361,12 +362,16 @@ from `provider/config.map.js` (values defined in `json/app.json`).
 
 ## How the Proxy Works
 
-[`proxy.js`](proxy.js) loads config from `provider/config.map.js`, builds the server via
-[`createProxyServer.js`](createProxyServer.js), applies client `headersTimeout` /
-`keepAliveTimeout`, listens on `proxyPort`, and registers graceful shutdown.
+[`proxy.js`](proxy.js) is the production entry point: it loads `provider/config.map.js`,
+creates the HTTP server, wires `proxy/` helpers, listens on `proxyPort`, applies
+client `headersTimeout` / `keepAliveTimeout`, and registers graceful shutdown.
 
-`createProxyServer` uses `http` from `provider/dependency.map.js` and forwards to
-`host`:`port` (the Express API by default).
+[`createProxyServer.js`](createProxyServer.js) mirrors the proxy request handler for
+automated tests only (integration tests bind ephemeral ports without starting `proxy.js`).
+
+Integration tests build the app via [`test/helpers/createExpressApp.js`](test/helpers/createExpressApp.js)
+and [`test/helpers/createTestApp.js`](test/helpers/createTestApp.js) (quieter middleware flags)
+without starting [`index.js`](index.js).
 
 1. Optional rate limiting (`layers/rate.limiting.layer.js`); over-limit clients get **429** without forwarding.
 2. Pipes the client request to an outbound `http.request` with the same method, path, and headers.
@@ -525,14 +530,14 @@ npm run test:coverage    # coverage report (text + lcov under coverage/)
 
 - `test/unit/` — provider, layers, interceptors, `middleware.loader.js`, `core/file.functions.js`
 - `test/integration/` — Express routes, proxy ↔ upstream, middleware stack, proxy-to-API e2e
-- `test/helpers/` — mock req/res, upstream server, test app loader (disables noisy interceptors where needed)
+- `test/helpers/` — `createExpressApp.js` (Express bootstrap for tests), `createTestApp.js`, mocks, upstream server
 - `test/fixtures/` — encryption helpers and config fragments
 
 Integration tests use ephemeral ports, temporary log directories, and mocked `process.exit` so graceful shutdown does not terminate the runner. They do not write to the project `logs/` folder.
 
 ### Coverage focus
 
-Coverage prioritizes `provider/`, `layers/`, `interceptors/`, `core/`, `proxy/`, `middleware.loader.js`, `createExpressApp.js`, and `createProxyServer.js`. Thin entry files (`index.js`, `proxy.js`) are exercised manually.
+Coverage prioritizes `provider/`, `layers/`, `interceptors/`, `core/`, `proxy/`, `middleware.loader.js`, `index.js`, and `createProxyServer.js`. Production `proxy.js` is exercised manually; Express integration tests use `test/helpers/createExpressApp.js`.
 
 ### Known limitations
 

@@ -1,4 +1,4 @@
-const { cluster } = require("./provider/dependency.map");
+const { express, cluster } = require("./provider/dependency.map");
 const {
   clusterInterceptor,
   markClusterShuttingDown,
@@ -9,7 +9,7 @@ const {
   SHUTDOWN_TIMEOUT,
   clustering,
 } = require("./provider/config.map");
-const { bootstrap, registerErrorMiddleware } = require("./createExpressApp");
+const { middleware, errorMiddleware } = require("./middleware.loader");
 const {
   gracefulShutdown,
   registerClusterPrimaryShutdown,
@@ -24,9 +24,40 @@ if (clustering && cluster.isPrimary) {
     markClusterShuttingDown,
   });
 } else {
-  const { app, activeRequests } = bootstrap();
+  const app = express();
 
-  registerErrorMiddleware(app);
+  middleware(app);
+
+  const activeRequests = new Set();
+
+  app.use((_, res, next) => {
+    activeRequests.add(res);
+
+    const release = () => {
+      activeRequests.delete(res);
+    };
+
+    res.once("finish", release);
+    res.once("close", release);
+
+    next();
+  });
+
+  app.get("/", (_, res) => {
+    res.json({
+      message: "hello world",
+    });
+  });
+
+  app.use((_, res) => {
+    res.status(404).json({
+      status: false,
+      statusCode: 404,
+      message: "Not Found",
+    });
+  });
+
+  errorMiddleware(app);
 
   const server = app.listen(port, host, () => {
     console.log(`http://${host}:${port}`);

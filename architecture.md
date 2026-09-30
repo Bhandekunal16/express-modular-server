@@ -25,8 +25,7 @@ It is not a production-grade security or deployment architecture. It is best sui
 Proxy Server
 ├── index.js                     # Express app entry point
 ├── proxy.js                    # Reverse proxy entry point
-├── createExpressApp.js         # Express bootstrap (exports bootstrap(); used by index.js and tests)
-├── createProxyServer.js        # Reverse proxy factory (used by proxy.js and tests)
+├── createProxyServer.js        # Test-only reverse proxy factory
 ├── proxy/
 │   ├── proxy.request.tracker.js       # activeRequests Set for graceful shutdown
 │   ├── proxy.timeout.handler.js       # Upstream request/response 504 timeouts
@@ -75,16 +74,13 @@ The main API server is created with Express and reads `host`, `port`,
 `SHUTDOWN_TIMEOUT`, and `clustering` from `provider/config.map.js` (merged from
 `json/` files; see §5 and §7).
 
-`index.js` calls `bootstrap()` from `createExpressApp.js`, which:
+`index.js` is the production entry: Express app creation, `middleware(app)`, active-request
+tracking, routes, `errorMiddleware(app)`, cluster primary vs worker branching, `listen`, and
+`gracefulShutdown()`.
 
-1. creates an Express application and registers middleware through `middleware(app)`
-2. tracks in-flight responses in a `Set` (for graceful shutdown)
-3. defines `GET /` and a 404 fallback route
-
-Then `index.js`:
-
-4. if `clustering` and primary: runs `clusterInterceptor()` and `registerClusterPrimaryShutdown()` (no HTTP server)
-5. otherwise: `registerErrorMiddleware(app)`, `app.listen()`, and `gracefulShutdown()`; cluster workers also handle a `shutdown` IPC message from the primary
+[`test/helpers/createExpressApp.js`](test/helpers/createExpressApp.js) mirrors the same
+middleware and routes for Jest (`bootstrap()` / `registerErrorMiddleware()`), loaded via
+`test/helpers/createTestApp.js` with mocked config.
 
 The root route responds with a simple JSON payload:
 
@@ -94,16 +90,18 @@ The root route responds with a simple JSON payload:
 
 This keeps the API intentionally minimal while proving the request lifecycle and middleware flow.
 
-### 3.2 Reverse Proxy (`proxy.js` + `createProxyServer.js`)
+### 3.2 Reverse Proxy (`proxy.js`)
 
-The reverse proxy is a Node.js `http` server built by `createProxyServer(config)`; `proxy.js` is the entry point that loads `provider/config.map.js`, listens on `proxyPort`, applies client-facing timeouts, and registers graceful shutdown. It does not use Express.
+The reverse proxy is a Node.js `http` server defined in `proxy.js`. It loads `provider/config.map.js`, composes `proxy/` helpers with `layers/`, listens on `proxyPort`, and registers graceful shutdown. It does not use Express.
 
-- target host / port: `host` / `port` from config (aliased as `TARGET_HOST` / `TARGET_PORT` in the factory)
-- proxy listening port: `proxyPort` (set in `proxy.js` only)
+- listen: `proxyPort` on `host` (`TARGET_HOST`)
+- outbound `http.request` uses `hostname: TARGET_HOST` and the `port` field from the options object in `proxy.js` (see that file for the current upstream target)
+
+[`createProxyServer.js`](createProxyServer.js) duplicates the handler for Jest integration tests; it is not imported by `proxy.js`.
 
 Runtime settings come from `provider/config.map.js` (see §5), including `PROXY_TIMEOUT`, `rateLimiting`, and the four `ENABLE_*` toggles.
 
-Request flow inside `createProxyServer`:
+Request flow (same shape in `proxy.js` and the test factory):
 
 1. returns **503** when `isShuttingDown()` is true
 2. optional rate limiting (`layers/rate.limiting.layer.js`) → **429** without forwarding
@@ -116,7 +114,7 @@ Request flow inside `createProxyServer`:
 
 `createProxyServer(config)` takes only the merged config object (no dependency-injection parameter). Tests mock modules such as `layers/rate.limiting.layer` when needed.
 
-`proxy.js` additionally sets `server.headersTimeout` / `server.keepAliveTimeout` when the client `ENABLE_CLIENT_*` flags are true, then calls `gracefulShutdown()` with the factory’s `activeProxyRequests` set.
+In `proxy.js`, `server.headersTimeout` / `server.keepAliveTimeout` are set when the client `ENABLE_CLIENT_*` flags are true, then `gracefulShutdown()` runs with the tracker’s `activeRequests` set.
 
 ### 3.3 Cluster Supervisor (`interceptors/cluster.interceptor.js`)
 
@@ -544,7 +542,7 @@ The project uses **Jest** (runner, mocks, timers, coverage) and **Supertest** (H
 | Unit | Direct calls to layers/interceptors and `proxy/` handlers; `jest.resetModules` + `doMock` for `provider/config.map` |
 | Middleware | Spy on `app.use` with mocked interceptor map |
 | Proxy | `createProxyServer(config)` with local upstream `http` servers on port `0`; module mocks for rate limit / shutdown edge cases |
-| API | `bootstrap()` from `createExpressApp.js` via `test/helpers/createTestApp.js` (reloads modules; disables encryption/logging noise) |
+| API | `bootstrap()` from `test/helpers/createExpressApp.js` via `test/helpers/createTestApp.js` (reloads modules; disables encryption/logging noise) |
 | Graceful shutdown | `resetShutdownStateForTests()` when `NODE_ENV=test`; global `process.exit` mock in `test/setup/jest.setup.js` |
 | Files | `process.cwd()` pointed at temp dirs; no writes to project `logs/` |
 

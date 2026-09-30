@@ -8,7 +8,7 @@ function loadCreateExpressApp(overrides = {}) {
     ...overrides,
   }));
 
-  return require("../../createExpressApp");
+  return require("./createExpressApp");
 }
 
 module.exports = { loadCreateExpressApp };
