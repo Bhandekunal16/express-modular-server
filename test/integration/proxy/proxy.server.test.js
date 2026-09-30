@@ -81,22 +81,27 @@ describe("createProxyServer integration", () => {
   });
 
   it("returns 503 when shutting down", async () => {
+    jest.resetModules();
+    jest.doMock("../../../layers/graceful.shutdown.layer", () => ({
+      ...jest.requireActual("../../../layers/graceful.shutdown.layer"),
+      isShuttingDown: () => true,
+    }));
+    const { createProxyServer: createProxy } = require("../../../createProxyServer");
+
     upstream = await createUpstreamServer();
-    const { server } = createProxyServer(
-      {
-        host: upstream.host,
-        port: upstream.port,
-        rateLimiting: false,
-        PROXY_TIMEOUT: 5000,
-        ENABLE_UPSTREAM_REQUEST_TIMEOUT: false,
-        ENABLE_UPSTREAM_RESPONSE_TIMEOUT: false,
-      },
-      { isShuttingDown: () => true },
-    );
+    const { server } = createProxy({
+      host: upstream.host,
+      port: upstream.port,
+      rateLimiting: false,
+      PROXY_TIMEOUT: 5000,
+      ENABLE_UPSTREAM_REQUEST_TIMEOUT: false,
+      ENABLE_UPSTREAM_RESPONSE_TIMEOUT: false,
+    });
 
     await new Promise((r) => server.listen(0, "127.0.0.1", r));
     const res = await proxyRequest(server.address().port);
     expect(res.status).toBe(503);
     await new Promise((r) => server.close(r));
+    jest.resetModules();
   });
 });

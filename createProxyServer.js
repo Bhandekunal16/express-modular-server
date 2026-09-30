@@ -1,20 +1,14 @@
-const defaultRateLimiter = require("./layers/rate.limiting.layer");
-const {
-  isShuttingDown: defaultIsShuttingDown,
-} = require("./layers/graceful.shutdown.layer");
-const fallbackProxy = require("./proxy/proxy.request.abort.handler");
+const rateLimiter = require("./layers/rate.limiting.layer");
+const { isShuttingDown } = require("./layers/graceful.shutdown.layer");
+const proxyRequestAbortHandler = require("./proxy/proxy.request.abort.handler");
 const {
   updateResponseTimeout,
   updateRequestTimeout,
 } = require("./proxy/proxy.timeout.handler");
+const { createProxyRequestTracker } = require("./proxy/proxy.request.tracker");
+const { http } = require("./provider/dependency.map");
 
-function createProxyServer(config, deps = {}) {
-  const { http } = deps.http
-    ? { http: deps.http }
-    : require("./provider/dependency.map");
-  const rateLimiter = deps.rateLimiter ?? defaultRateLimiter;
-  const isShuttingDownFn = deps.isShuttingDown ?? defaultIsShuttingDown;
-
+function createProxyServer(config) {
   const {
     host: TARGET_HOST,
     port: TARGET_PORT,
@@ -24,19 +18,10 @@ function createProxyServer(config, deps = {}) {
     ENABLE_UPSTREAM_RESPONSE_TIMEOUT,
   } = config;
 
-  const activeProxyRequests = new Set();
-
-  function untrackProxyRequest(proxyReq) {
-    activeProxyRequests.delete(proxyReq);
-  }
-
-  function trackProxyRequest(proxyReq) {
-    activeProxyRequests.add(proxyReq);
-    proxyReq.once("close", () => untrackProxyRequest(proxyReq));
-  }
+  const { track, activeRequests } = createProxyRequestTracker();
 
   const server = http.createServer((req, res) => {
-    if (isShuttingDownFn()) {
+    if (isShuttingDown()) {
       if (!res.headersSent)
         res.writeHead(503, { "Content-Type": "text/plain" });
       if (!res.writableEnded) res.end("Service Unavailable");
@@ -66,7 +51,7 @@ function createProxyServer(config, deps = {}) {
       proxyRes.pipe(res);
     });
 
-    trackProxyRequest(proxyReq);
+    track(proxyReq);
 
     if (ENABLE_UPSTREAM_REQUEST_TIMEOUT)
       updateRequestTimeout(proxyReq, res, PROXY_TIMEOUT);
@@ -76,12 +61,12 @@ function createProxyServer(config, deps = {}) {
       if (!res.writableEnded) res.end("Bad Gateway");
     });
 
-    fallbackProxy(req, proxyReq);
+    proxyRequestAbortHandler(req, proxyReq);
 
     req.pipe(proxyReq);
   });
 
-  return { server, activeProxyRequests };
+  return { server, activeRequests };
 }
 
 module.exports = { createProxyServer };

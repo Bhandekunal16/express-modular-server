@@ -28,6 +28,7 @@ Proxy Server
 ├── createExpressApp.js         # Express bootstrap (exports bootstrap(); used by index.js and tests)
 ├── createProxyServer.js        # Reverse proxy factory (used by proxy.js and tests)
 ├── proxy/
+│   ├── proxy.request.tracker.js       # activeRequests Set for graceful shutdown
 │   ├── proxy.timeout.handler.js       # Upstream request/response 504 timeouts
 │   └── proxy.request.abort.handler.js # Client abort/error → destroy upstream
 ├── middleware.loader.js        # Central middleware registration
@@ -105,12 +106,14 @@ Request flow inside `createProxyServer`:
 
 1. returns **503** when `isShuttingDown()` is true
 2. optional rate limiting (`layers/rate.limiting.layer.js`) → **429** without forwarding
-3. outbound `http.request` with the same method, path, and headers; each `proxyReq` tracked in a `Set` until `close`
+3. outbound `http.request` with the same method, path, and headers; `proxy/proxy.request.tracker.js` adds each `proxyReq` to `activeRequests` until `close`
 4. when `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` is true, `proxy/proxy.timeout.handler.js` → `updateResponseTimeout` (**504** on expiry)
 5. when `ENABLE_UPSTREAM_REQUEST_TIMEOUT` is true, `updateRequestTimeout` on the upstream request (**504** on expiry)
 6. **502** on upstream connection errors
 7. `proxy/proxy.request.abort.handler.js` wires client `aborted`, `error`, and incomplete `close` to destroy the upstream request
 8. `req.pipe(proxyReq)` streams the body
+
+`createProxyServer(config)` takes only the merged config object (no dependency-injection parameter). Tests mock modules such as `layers/rate.limiting.layer` when needed.
 
 `proxy.js` additionally sets `server.headersTimeout` / `server.keepAliveTimeout` when the client `ENABLE_CLIENT_*` flags are true, then calls `gracefulShutdown()` with the factory’s `activeProxyRequests` set.
 
@@ -539,7 +542,7 @@ The project uses **Jest** (runner, mocks, timers, coverage) and **Supertest** (H
 |------|----------|
 | Unit | Direct calls to layers/interceptors and `proxy/` handlers; `jest.resetModules` + `doMock` for `provider/config.map` |
 | Middleware | Spy on `app.use` with mocked interceptor map |
-| Proxy | `createProxyServer(config, deps)` with local upstream `http` servers on port `0` |
+| Proxy | `createProxyServer(config)` with local upstream `http` servers on port `0`; module mocks for rate limit / shutdown edge cases |
 | API | `bootstrap()` from `createExpressApp.js` via `test/helpers/createTestApp.js` (reloads modules; disables encryption/logging noise) |
 | Graceful shutdown | `resetShutdownStateForTests()` when `NODE_ENV=test`; global `process.exit` mock in `test/setup/jest.setup.js` |
 | Files | `process.cwd()` pointed at temp dirs; no writes to project `logs/` |

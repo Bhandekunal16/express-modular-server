@@ -2,6 +2,10 @@ const http = require("http");
 const { createProxyServer } = require("../../../createProxyServer");
 
 describe("proxy upstream timeouts and rate limiting", () => {
+  afterEach(() => {
+    jest.resetModules();
+  });
+
   it("returns 504 on upstream request timeout", async () => {
     const slowServer = http.createServer(() => {});
     await new Promise((r) => slowServer.listen(0, "127.0.0.1", r));
@@ -36,14 +40,7 @@ describe("proxy upstream timeouts and rate limiting", () => {
   });
 
   it("rate limits before contacting upstream", async () => {
-    let upstreamHits = 0;
-    const upstream = http.createServer((_, res) => {
-      upstreamHits += 1;
-      res.end("ok");
-    });
-    await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
-    const upstreamAddr = upstream.address();
-
+    jest.resetModules();
     const rateLimiter = jest
       .fn()
       .mockImplementationOnce(() => true)
@@ -52,18 +49,25 @@ describe("proxy upstream timeouts and rate limiting", () => {
         res.end("limited");
         return false;
       });
+    jest.doMock("../../../layers/rate.limiting.layer", () => rateLimiter);
+    const { createProxyServer: createProxy } = require("../../../createProxyServer");
 
-    const { server } = createProxyServer(
-      {
-        host: upstreamAddr.address,
-        port: upstreamAddr.port,
-        rateLimiting: true,
-        PROXY_TIMEOUT: 1000,
-        ENABLE_UPSTREAM_REQUEST_TIMEOUT: false,
-        ENABLE_UPSTREAM_RESPONSE_TIMEOUT: false,
-      },
-      { rateLimiter },
-    );
+    let upstreamHits = 0;
+    const upstream = http.createServer((_, res) => {
+      upstreamHits += 1;
+      res.end("ok");
+    });
+    await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
+    const upstreamAddr = upstream.address();
+
+    const { server } = createProxy({
+      host: upstreamAddr.address,
+      port: upstreamAddr.port,
+      rateLimiting: true,
+      PROXY_TIMEOUT: 1000,
+      ENABLE_UPSTREAM_REQUEST_TIMEOUT: false,
+      ENABLE_UPSTREAM_RESPONSE_TIMEOUT: false,
+    });
 
     await new Promise((r) => server.listen(0, "127.0.0.1", r));
     const proxyPort = server.address().port;

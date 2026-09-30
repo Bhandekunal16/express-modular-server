@@ -1,4 +1,4 @@
-module.exports = function fallbackProxy(req, proxyReq) {
+module.exports = function proxyRequestAbortHandler(req, proxyReq) {
   function destroyProxyRequest() {
     if (!proxyReq.destroyed) proxyReq.destroy();
   }

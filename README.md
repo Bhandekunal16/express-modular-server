@@ -20,6 +20,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 ├── createExpressApp.js   # exports bootstrap() for Express app wiring
 ├── createProxyServer.js
 ├── proxy/
+│   ├── proxy.request.tracker.js
 │   ├── proxy.timeout.handler.js
 │   └── proxy.request.abort.handler.js
 ├── middleware.loader.js
@@ -368,9 +369,10 @@ from `provider/config.map.js` (values defined in `json/app.json`).
 
 1. Optional rate limiting (`layers/rate.limiting.layer.js`); over-limit clients get **429** without forwarding.
 2. Pipes the client request to an outbound `http.request` with the same method, path, and headers.
-3. Upstream **504** handling when enabled: [`proxy/proxy.timeout.handler.js`](proxy/proxy.timeout.handler.js) (`updateRequestTimeout` / `updateResponseTimeout`).
-4. Client abort/error handling: [`proxy/proxy.request.abort.handler.js`](proxy/proxy.request.abort.handler.js) destroys the upstream request when the client disconnects.
-5. Streams the upstream response back to the client.
+3. Each upstream `proxyReq` is tracked in a `Set` via [`proxy/proxy.request.tracker.js`](proxy/proxy.request.tracker.js) for graceful shutdown (`activeRequests`).
+4. Upstream **504** handling when enabled: [`proxy/proxy.timeout.handler.js`](proxy/proxy.timeout.handler.js) (`updateRequestTimeout` / `updateResponseTimeout`).
+5. Client abort/error handling: [`proxy/proxy.request.abort.handler.js`](proxy/proxy.request.abort.handler.js) destroys the upstream request when the client disconnects.
+6. Streams the upstream response back to the client.
 
 **Errors and timeouts**
 
