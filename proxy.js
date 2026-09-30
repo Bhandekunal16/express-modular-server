@@ -13,7 +13,7 @@ const {
   ENABLE_UPSTREAM_RESPONSE_TIMEOUT,
 } = require("./provider/config.map");
 
-const { http } = require("./provider/dependency.map");
+const { http, logByte } = require("./provider/dependency.map");
 const rateLimiter = require("./layers/rate.limiting.layer");
 const {
   isShuttingDown,
@@ -92,7 +92,7 @@ if (ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT) {
 }
 
 server.listen(proxyPort, TARGET_HOST, () => {
-  console.log(`Proxy server (http://${TARGET_HOST}:${proxyPort})`);
+  logByte.info(`Proxy server (http://${TARGET_HOST}:${proxyPort})`);
 });
 
 gracefulShutdown({

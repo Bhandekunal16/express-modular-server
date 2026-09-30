@@ -10,5 +10,6 @@ module.exports = {
   os: require("os"),
   helmet: require("helmet"),
   rateLimit: require("express-rate-limit"),
+  logByte: require("log-byte"),
   performance,
 };

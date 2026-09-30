@@ -1,4 +1,4 @@
-const { express, cluster } = require("./provider/dependency.map");
+const { express, cluster, logByte } = require("./provider/dependency.map");
 const {
   clusterInterceptor,
   markClusterShuttingDown,
@@ -60,7 +60,7 @@ if (clustering && cluster.isPrimary) {
   errorMiddleware(app);
 
   const server = app.listen(port, host, () => {
-    console.log(`Backend server (http://${host}:${port})`);
+    logByte.info(`Backend server (http://${host}:${port})`);
   });
 
   const serverName = clustering ? "Express worker" : "Express";
