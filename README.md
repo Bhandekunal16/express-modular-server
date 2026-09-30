@@ -17,7 +17,16 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 .
 ├── index.js
 ├── proxy.js
+├── createExpressApp.js
+├── createProxyServer.js
 ├── middleware.loader.js
+├── jest.config.js
+├── test/
+│   ├── unit/
+│   ├── integration/
+│   ├── helpers/
+│   ├── fixtures/
+│   └── setup/
 ├── provider/
 │   ├── dependency.map.js
 │   ├── config.map.js
@@ -488,15 +497,38 @@ on the reverse proxy only. Counters are in-memory in the proxy process;
 production deployments may need stricter limits, a shared store (for example
 Redis), or rate limiting at an external gateway.
 
-## Scripts
+## Testing
 
-The current `package.json` includes a placeholder test script:
+Automated tests use **Jest** and **Supertest**. Jest fits this CommonJS codebase because it supports module mocking (`config.map`, interceptors), timer control (rate-limit windows, graceful shutdown), and coverage without a separate build step.
+
+### Commands
 
 ```bash
-npm test
+npm test                 # full suite (run in band for stable ports/timers)
+npm run test:unit        # unit tests only
+npm run test:integration # integration tests only
+npm run test:coverage    # coverage report (text + lcov under coverage/)
 ```
 
-At the moment, this is not configured with real automated tests.
+### Layout
+
+- `test/unit/` — provider, layers, interceptors, `middleware.loader.js`, `core/file.functions.js`
+- `test/integration/` — Express routes, proxy ↔ upstream, middleware stack, proxy-to-API e2e
+- `test/helpers/` — mock req/res, upstream server, test app loader (disables noisy interceptors where needed)
+- `test/fixtures/` — encryption helpers and config fragments
+
+Integration tests use ephemeral ports, temporary log directories, and mocked `process.exit` so graceful shutdown does not terminate the runner. They do not write to the project `logs/` folder.
+
+### Coverage focus
+
+Coverage prioritizes `provider/`, `layers/`, `interceptors/`, `core/`, `middleware.loader.js`, `createExpressApp.js`, and `createProxyServer.js`. Thin entry files (`index.js`, `proxy.js`) are exercised manually.
+
+### Known limitations
+
+- Clustering is covered with mocked `cluster`/`os`, not full multi-worker E2E.
+- Demo encryption is behavior-tested, not audited for production crypto.
+- Error interceptor JSON always includes `statusCode: 500` even when HTTP status differs.
+- Real OS signal delivery is not asserted; shutdown uses `triggerGracefulShutdown` and mocks.
 
 ## License
 
@@ -508,5 +540,4 @@ The project is currently configured with the ISC license in `package.json`.
 - redact sensitive data and use a configurable logging framework
 - add health check endpoints
 - add proxy retries and richer timeout metrics
-- add automated tests
 - add production-ready security hardening

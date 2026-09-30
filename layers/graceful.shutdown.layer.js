@@ -167,10 +167,19 @@ function registerWorkerShutdownMessage(onShutdownMessage) {
   });
 }
 
+function resetShutdownStateForTests() {
+  if (process.env.NODE_ENV !== "test") return;
+
+  shutdownStarted = false;
+  shutdownConfig = null;
+  clusterShutdownStarted = false;
+}
+
 module.exports = {
   gracefulShutdown,
   triggerGracefulShutdown,
   isShuttingDown,
   registerClusterPrimaryShutdown,
   registerWorkerShutdownMessage,
+  resetShutdownStateForTests,
 };

@@ -25,7 +25,11 @@ It is not a production-grade security or deployment architecture. It is best sui
 Proxy Server
 ├── index.js                     # Express app entry point
 ├── proxy.js                    # Reverse proxy entry point
+├── createExpressApp.js         # Express app factory (used by index.js and tests)
+├── createProxyServer.js        # Reverse proxy factory (used by proxy.js and tests)
 ├── middleware.loader.js        # Central middleware registration
+├── jest.config.js              # Jest test runner configuration
+├── test/                       # Automated unit and integration tests
 ├── provider/
 │   ├── dependency.map.js       # Shared dependency registry
 │   ├── config.map.js           # Merged json/* runtime configuration
@@ -511,7 +515,7 @@ This is a simple, local-file logging mechanism appropriate for development use.
 - proxy timeout and keep-alive behavior are basic; no retries or structured timeout metrics
 - no environment-based configuration management
 - custom encryption is not production-grade
-- no automated tests configured
+- automated tests exist but do not cover every deployment edge case (see Testing section)
 
 ## 11. Design Summary
 
@@ -527,7 +531,22 @@ This project follows a deliberately simple layered architecture:
 
 This keeps the system approachable while exposing the essential principles behind web servers, reverse proxies, middleware composition, and lightweight request processing.
 
-## 12. Recommended Future Enhancements
+## 12. Testing Architecture
+
+The project uses **Jest** (runner, mocks, timers, coverage) and **Supertest** (HTTP assertions against Express).
+
+| Area | Approach |
+|------|----------|
+| Unit | Direct calls to layers/interceptors; `jest.resetModules` + `doMock` for `provider/config.map` |
+| Middleware | Spy on `app.use` with mocked interceptor map |
+| Proxy | `createProxyServer(config, deps)` with local upstream `http` servers on port `0` |
+| API | `createExpressApp()` via `test/helpers/createTestApp.js` (reloads modules; disables encryption/logging noise) |
+| Graceful shutdown | `resetShutdownStateForTests()` when `NODE_ENV=test`; global `process.exit` mock in `test/setup/jest.setup.js` |
+| Files | `process.cwd()` pointed at temp dirs; no writes to project `logs/` |
+
+Run `npm test`, `npm run test:unit`, `npm run test:integration`, or `npm run test:coverage`. Entry points remain thin wrappers around the factories so production behavior stays the same while tests bind ephemeral ports.
+
+## 13. Recommended Future Enhancements
 
 If the project is extended, the most valuable next steps would be:
 
@@ -536,7 +555,6 @@ If the project is extended, the most valuable next steps would be:
 - validate incoming request bodies and headers
 - add authentication and authorization
 - add structured logging with rotation and sanitization
-- add automated tests for API and proxy behavior
 - separate proxy target configuration from app configuration
 - add health checks and monitoring endpoints
 
