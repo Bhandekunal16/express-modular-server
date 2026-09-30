@@ -18,6 +18,7 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 ├── index.js
 ├── proxy.js
 ├── dependency.map.js
+├── config.map.js
 ├── interceptor.map.js
 ├── middleware.loader.js
 ├── architecture.md
@@ -68,6 +69,11 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 - Easy host/port configuration through JSON files
 
 ## Configuration
+
+Settings live in `json/app.json` and `json/config.json` on disk. The reverse proxy
+loads both through [`config.map.js`](config.map.js), which merges the two objects
+(`config` first, then `app`; duplicate keys use the `app` value). `index.js` and
+`middleware.loader.js` still import those JSON files directly.
 
 ### `json/app.json`
 
@@ -122,7 +128,7 @@ The same file also holds encryption-related fields used by `interceptors/encrypt
 - `requestId` — enables request ID middleware from `layers/request.id.layer.js` on the Express app only
 - `response_interceptor` — enables response summary logging from `interceptors/response.interceptor.js` on the Express app
 - `clustering` — enables the Node.js cluster process manager, which forks worker processes and lets only the worker bind the Express server port
-- `ENABLE_UPSTREAM_REQUEST_TIMEOUT` — when true, `proxy.js` applies `PROXY_TIMEOUT` to the outbound upstream request; on timeout the proxy responds with **504** and destroys the upstream socket
+- `ENABLE_UPSTREAM_REQUEST_TIMEOUT` — when true, `proxy.js` (via `config.map.js`) applies `PROXY_TIMEOUT` to the outbound upstream request; on timeout the proxy responds with **504** and destroys the upstream socket
 - `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` — when true, applies `PROXY_TIMEOUT` to the upstream response stream; on timeout responds with **504**
 - `ENABLE_CLIENT_HEADERS_TIMEOUT` — when true, sets `server.headersTimeout` to `HEADERS_TIMEOUT` on the proxy
 - `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` — when true, sets `server.keepAliveTimeout` to `KEEP_ALIVE_TIMEOUT` on the proxy
@@ -160,6 +166,10 @@ For correlation, logged entries include `requestId` resolved as
 neither is present (for example when `requestId` is disabled in config but the
 client still sends a header).
 
+On the console, each entry is a single line prefixed with `request:` followed
+by `JSON.stringify` of the log object. Lines written under `logs/` are raw JSON
+without that prefix.
+
 ## Response logging
 
 The optional response logger in `interceptors/response.interceptor.js` is enabled
@@ -174,6 +184,9 @@ When `WRITE_L0G` is true in `json/logger.config.json`, each response summary is
 also appended as a JSON line under `logs/`, using the same file helper as the
 request logger. The `exclude` array applies only to request logs, not these
 response summaries.
+
+On the console, each summary is prefixed with `response:` followed by
+`JSON.stringify` of the summary object (file lines remain raw JSON).
 
 ## Helmet Security Headers
 
@@ -305,8 +318,8 @@ http://localhost:3000/
 
 Expected response:
 
-```text
-hello world
+```json
+{ "message": "hello world" }
 ```
 
 ### Start the proxy server
@@ -321,11 +334,16 @@ This server listens on:
 http://0.0.0.0:8080
 ```
 
-Requests sent to the proxy port are forwarded to the configured backend target defined in `json/app.json`.
+Requests sent to the proxy port are forwarded to the backend target from
+`json/app.json` (`host` and `port`), with proxy flags and timeouts merged via
+`config.map.js` at runtime.
 
 ## How the Proxy Works
 
-`proxy.js` uses `http` from `dependency.map.js`. It listens on `proxyPort` and forwards to `host`:`port` from `json/app.json` (the Express API by default).
+`proxy.js` uses `http` from `dependency.map.js` and reads `host`, `port`,
+`proxyPort`, timeout values, and `ENABLE_*` / `rateLimiting` flags from
+`config.map.js` (backed by `json/app.json` and `json/config.json`). It listens
+on `proxyPort` and forwards to `host`:`port` (the Express API by default).
 
 1. Optional rate limiting (`layers/rate.limiting.layer.js`); over-limit clients get **429** without forwarding.
 2. Pipes the client request to an outbound `http.request` with the same method, path, and headers.

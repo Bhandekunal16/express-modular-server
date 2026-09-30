@@ -27,6 +27,7 @@ Proxy Server
 ├── proxy.js                    # Reverse proxy entry point
 ├── middleware.loader.js        # Central middleware registration
 ├── dependency.map.js           # Shared dependency registry
+├── config.map.js               # Merged json/config + json/app (proxy entry)
 ├── interceptor.map.js          # Middleware and process registry
 ├── architecture.md             # System design documentation
 ├── README.md                   # Project overview and usage
@@ -90,7 +91,12 @@ The reverse proxy is a Node.js `http` server. It does not use Express; it create
 - target port: `TARGET_PORT`
 - proxy listening port: `proxyPort`
 
-The proxy imports `http` from `dependency.map.js` and reads `PROXY_TIMEOUT`, `HEADERS_TIMEOUT`, `KEEP_ALIVE_TIMEOUT`, and `SHUTDOWN_TIMEOUT` from `json/app.json`.
+The proxy imports `http` from `dependency.map.js` and loads runtime settings from
+`config.map.js`, which merges `json/config.json` and `json/app.json` (same
+spread order as in code: config, then app). Destructured names include
+`TARGET_HOST` / `TARGET_PORT` (`host` / `port`), `proxyPort`, `PROXY_TIMEOUT`,
+`HEADERS_TIMEOUT`, `KEEP_ALIVE_TIMEOUT`, `SHUTDOWN_TIMEOUT`, `rateLimiting`, and
+the four `ENABLE_*` timeout toggles.
 
 1. returns **503** `Service Unavailable` when graceful shutdown has started (`isShuttingDown()`)
 2. optionally runs the shared rate limiting layer when `rateLimiting` is true (429 and no forward if the limit is exceeded)
@@ -186,6 +192,17 @@ This file maps logical middleware names to concrete implementation modules:
 
 This creates a single place where middleware can be registered or extended without changing multiple import sites.
 
+### `config.map.js`
+
+This file mirrors the registry pattern used by `dependency.map.js` and
+`interceptor.map.js`: one import surface for configuration consumed by the
+reverse proxy. It requires `json/config.json` and `json/app.json` and exports
+their properties as a single object (`{ ...config, ...app }`).
+
+Only `proxy.js` uses this module today. The Express entry (`index.js`) and
+`middleware.loader.js` still read the JSON files directly, so both paths remain
+valid while editing files under `json/`.
+
 ## 6. Optional Interceptors
 
 The project supports optional processing layers that can be toggled in `json/config.json`.
@@ -235,8 +252,8 @@ This middleware logs request details such as:
 
 It then writes the sanitized object to either:
 
-- the console
-- a dated log file in `logs/`
+- the console, as one line: `request:` plus `JSON.stringify` of the object
+- a dated log file in `logs/` as a raw JSON line (no `request:` prefix)
 
 The logger is controlled by `json/logger.config.json` and supports excluding sensitive request properties such as `body`, `headers`, `params`, or `query`.
 
@@ -248,7 +265,10 @@ File: `interceptors/response.interceptor.js`
 
 When `response_interceptor` is `true`, this middleware starts a timer and listens for `res` `"finish"`. It logs `method`, `originalUrl`, `statusCode`, numeric `durationMs` (via `performance` from `dependency.map.js`), `contentLength` from `res.getHeader("content-length")`, and the same `requestId` resolution as the request logger.
 
-When `WRITE_L0G` is true, each summary is also appended to the dated file under `logs/` through `core/file.functions.js`. Request-log `exclude` does not apply to this object.
+Console output uses the prefix `response:` plus `JSON.stringify` of the summary
+object. When `WRITE_L0G` is true, each summary is also appended to the dated
+file under `logs/` through `core/file.functions.js` as raw JSON. Request-log
+`exclude` does not apply to this object.
 
 ### 6.5 Helmet Security Headers
 
