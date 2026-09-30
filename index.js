@@ -3,8 +3,12 @@ const {
   clusterInterceptor,
   markClusterShuttingDown,
 } = require("./provider/interceptor.map");
-const { host, port, SHUTDOWN_TIMEOUT } = require("./json/app.json");
-const { clustering } = require("./json/config.json");
+const {
+  host,
+  port,
+  SHUTDOWN_TIMEOUT,
+  clustering,
+} = require("./provider/config.map");
 const { middleware, errorMiddleware } = require("./middleware.loader");
 const {
   gracefulShutdown,
