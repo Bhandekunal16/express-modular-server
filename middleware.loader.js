@@ -1,4 +1,4 @@
-const { express, cors } = require("./dependency.map");
+const { express, cors } = require("./provider/dependency.map");
 
 const {
   errorInterceptor,
@@ -16,7 +16,7 @@ const {
   helmetInterceptor,
   requestIdInterceptor,
   responseInterceptor,
-} = require("./interceptor.map");
+} = require("./provider/interceptor.map");
 
 function middleware(app) {
   if (requestId) app.use(requestIdInterceptor);

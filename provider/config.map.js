@@ -1,6 +1,6 @@
 const environment = {
-  config: require("./json/config.json"),
-  app: require("./json/app.json"),
+  config: require("../json/config.json"),
+  app: require("../json/app.json"),
 };
 
 

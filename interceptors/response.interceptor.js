@@ -1,4 +1,4 @@
-const { performance } = require("../dependency.map");
+const { performance } = require("../provider/dependency.map");
 const append = require("../core/file.functions");
 const { WRITE_L0G } = require("../json/logger.config.json");
 

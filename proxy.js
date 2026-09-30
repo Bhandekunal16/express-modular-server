@@ -1,4 +1,4 @@
-const { http } = require("./dependency.map");
+const { http } = require("./provider/dependency.map");
 const {
   host: TARGET_HOST,
   port: TARGET_PORT,
@@ -12,7 +12,7 @@ const {
   ENABLE_UPSTREAM_RESPONSE_TIMEOUT,
   ENABLE_CLIENT_HEADERS_TIMEOUT,
   ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT,
-} = require("./config.map");
+} = require("./provider/config.map");
 
 const rateLimiter = require("./layers/rate.limiting.layer");
 

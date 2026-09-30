@@ -1,4 +1,4 @@
-const { fs, path } = require("../dependency.map");
+const { fs, path } = require("../provider/dependency.map");
 
 module.exports = function append(log) {
   try {

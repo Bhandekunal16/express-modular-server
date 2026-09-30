@@ -1,4 +1,4 @@
-const { helmet } = require("../dependency.map");
+const { helmet } = require("../provider/dependency.map");
 const config = require("../json/helmet.config.json");
 
 module.exports = function helmetInterceptor(app) {

@@ -1,4 +1,4 @@
-const { cluster } = require("../dependency.map");
+const { cluster } = require("../provider/dependency.map");
 
 let shutdownStarted = false;
 let shutdownConfig = null;
