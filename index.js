@@ -71,7 +71,7 @@ if (clustering && cluster.isPrimary) {
     shutdownTimeout: SHUTDOWN_TIMEOUT,
     activeRequests,
     onShutdown: () => {
-      console.log(`${serverName}: shutdown started`);
+      logByte.warn(`${serverName}: shutdown started`);
     },
   });
 
