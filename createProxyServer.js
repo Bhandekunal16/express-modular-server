@@ -6,6 +6,7 @@ const {
   updateRequestTimeout,
 } = require("./proxy/proxy.timeout.handler");
 const { createProxyRequestTracker } = require("./proxy/proxy.request.tracker");
+const sendBadGateway = require("./proxy/proxy.error.handler");
 const { http } = require("./provider/dependency.map");
 
 function createProxyServer(config) {
@@ -56,10 +57,7 @@ function createProxyServer(config) {
     if (ENABLE_UPSTREAM_REQUEST_TIMEOUT)
       updateRequestTimeout(proxyReq, res, PROXY_TIMEOUT);
 
-    proxyReq.on("error", () => {
-      if (!res.headersSent) res.writeHead(502);
-      if (!res.writableEnded) res.end("Bad Gateway");
-    });
+    sendBadGateway(proxyReq, res);
 
     proxyRequestAbortHandler(req, proxyReq);
 
