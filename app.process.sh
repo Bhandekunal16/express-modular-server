@@ -1,0 +1,1 @@
+node index.js & node proxy.js & wait -n 10000
