@@ -8,7 +8,7 @@ function createExpressApp() {
 
   const activeRequests = new Set();
 
-  app.use((req, res, next) => {
+  app.use((_, res, next) => {
     activeRequests.add(res);
 
     const release = () => {
