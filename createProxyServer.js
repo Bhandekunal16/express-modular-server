@@ -2,6 +2,7 @@ const defaultRateLimiter = require("./layers/rate.limiting.layer");
 const {
   isShuttingDown: defaultIsShuttingDown,
 } = require("./layers/graceful.shutdown.layer");
+const fallbackProxy = require("./proxy/proxy.request.abort.handler");
 
 function createProxyServer(config, deps = {}) {
   const { http } = deps.http
@@ -83,13 +84,7 @@ function createProxyServer(config, deps = {}) {
       if (!res.writableEnded) res.end("Bad Gateway");
     });
 
-    req.on("aborted", () => {
-      proxyReq.destroy();
-    });
-
-    req.on("error", () => {
-      proxyReq.destroy();
-    });
+    fallbackProxy(req, proxyReq);
 
     req.pipe(proxyReq);
   });
