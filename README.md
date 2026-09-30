@@ -17,10 +17,11 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 .
 ├── index.js
 ├── proxy.js
-├── dependency.map.js
-├── config.map.js
-├── interceptor.map.js
 ├── middleware.loader.js
+├── provider/
+│   ├── dependency.map.js
+│   ├── config.map.js
+│   └── interceptor.map.js
 ├── architecture.md
 ├── package.json
 ├── package-lock.json
@@ -70,10 +71,11 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 
 ## Configuration
 
-Settings live in `json/app.json` and `json/config.json` on disk. The reverse proxy
-loads both through [`config.map.js`](config.map.js), which merges the two objects
-(`config` first, then `app`; duplicate keys use the `app` value). `index.js` and
-`middleware.loader.js` still import those JSON files directly.
+Settings live in `json/app.json` and `json/config.json` on disk.
+[`provider/config.map.js`](provider/config.map.js) merges the two objects (`config`
+first, then `app`; duplicate keys use the `app` value). `index.js` and `proxy.js`
+import runtime settings from that module; `middleware.loader.js` still reads feature
+flags directly from `json/config.json`.
 
 ### `json/app.json`
 
@@ -128,7 +130,7 @@ The same file also holds encryption-related fields used by `interceptors/encrypt
 - `requestId` — enables request ID middleware from `layers/request.id.layer.js` on the Express app only
 - `response_interceptor` — enables response summary logging from `interceptors/response.interceptor.js` on the Express app
 - `clustering` — enables the Node.js cluster process manager, which forks worker processes and lets only the worker bind the Express server port
-- `ENABLE_UPSTREAM_REQUEST_TIMEOUT` — when true, `proxy.js` (via `config.map.js`) applies `PROXY_TIMEOUT` to the outbound upstream request; on timeout the proxy responds with **504** and destroys the upstream socket
+- `ENABLE_UPSTREAM_REQUEST_TIMEOUT` — when true, `proxy.js` (via `provider/config.map.js`) applies `PROXY_TIMEOUT` to the outbound upstream request; on timeout the proxy responds with **504** and destroys the upstream socket
 - `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` — when true, applies `PROXY_TIMEOUT` to the upstream response stream; on timeout responds with **504**
 - `ENABLE_CLIENT_HEADERS_TIMEOUT` — when true, sets `server.headersTimeout` to `HEADERS_TIMEOUT` on the proxy
 - `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` — when true, sets `server.keepAliveTimeout` to `KEEP_ALIVE_TIMEOUT` on the proxy
@@ -147,8 +149,9 @@ when `rateLimiting` is true. The exported
 `errorMiddleware(app)` function registers the error interceptor only when
 `errorInterceptor` is enabled.
 
-The loader gets Express and CORS from `dependency.map.js` and the interceptor
-functions from `interceptor.map.js`. `index.js` calls `middleware(app)` during
+The loader gets Express and CORS from `provider/dependency.map.js` and the
+interceptor functions from `provider/interceptor.map.js`. `index.js` calls
+`middleware(app)` during
 app setup and calls `errorMiddleware(app)` to register the configured error
 handler.
 
@@ -176,7 +179,7 @@ The optional response logger in `interceptors/response.interceptor.js` is enable
 with `response_interceptor: true` in `json/config.json`. It records a summary
 when the response finishes (`res` `"finish"` event): the same `requestId`
 resolution as the request logger, HTTP method, `originalUrl`, `statusCode`,
-`durationMs` (numeric milliseconds via `performance` from `dependency.map.js`),
+`durationMs` (numeric milliseconds via `performance` from `provider/dependency.map.js`),
 and `contentLength` from `res.getHeader("content-length")`. It runs after the
 request logger in `middleware.loader.js` and only on the Express API.
 
@@ -213,7 +216,7 @@ Example `json/helmet.config.json`:
 
 Optional request correlation is controlled by `requestId` in `json/config.json`.
 The middleware lives in `layers/request.id.layer.js` and is registered through
-`interceptor.map.js` as `requestIdInterceptor`.
+`provider/interceptor.map.js` as `requestIdInterceptor`.
 
 When enabled:
 
@@ -336,13 +339,13 @@ http://0.0.0.0:8080
 
 Requests sent to the proxy port are forwarded to the backend target from
 `json/app.json` (`host` and `port`), with proxy flags and timeouts merged via
-`config.map.js` at runtime.
+`provider/config.map.js` at runtime.
 
 ## How the Proxy Works
 
-`proxy.js` uses `http` from `dependency.map.js` and reads `host`, `port`,
+`proxy.js` uses `http` from `provider/dependency.map.js` and reads `host`, `port`,
 `proxyPort`, timeout values, and `ENABLE_*` / `rateLimiting` flags from
-`config.map.js` (backed by `json/app.json` and `json/config.json`). It listens
+`provider/config.map.js` (backed by `json/app.json` and `json/config.json`). It listens
 on `proxyPort` and forwards to `host`:`port` (the Express API by default).
 
 1. Optional rate limiting (`layers/rate.limiting.layer.js`); over-limit clients get **429** without forwarding.

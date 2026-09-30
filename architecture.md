@@ -26,9 +26,10 @@ Proxy Server
 ├── index.js                     # Express app entry point
 ├── proxy.js                    # Reverse proxy entry point
 ├── middleware.loader.js        # Central middleware registration
-├── dependency.map.js           # Shared dependency registry
-├── config.map.js               # Merged json/config + json/app (proxy entry)
-├── interceptor.map.js          # Middleware and process registry
+├── provider/
+│   ├── dependency.map.js       # Shared dependency registry
+│   ├── config.map.js           # Merged json/config + json/app
+│   └── interceptor.map.js    # Middleware and process registry
 ├── architecture.md             # System design documentation
 ├── README.md                   # Project overview and usage
 ├── package.json                # App metadata and scripts
@@ -61,10 +62,9 @@ Proxy Server
 
 ### 3.1 Express API Server (`index.js`)
 
-The main API server is created with Express and starts on the value configured in `json/app.json`:
-
-- `host`
-- `port`
+The main API server is created with Express and reads `host`, `port`,
+`SHUTDOWN_TIMEOUT`, and `clustering` from `provider/config.map.js` (sourced from
+`json/app.json` and `json/config.json` on disk).
 
 The server performs the following steps:
 
@@ -91,8 +91,8 @@ The reverse proxy is a Node.js `http` server. It does not use Express; it create
 - target port: `TARGET_PORT`
 - proxy listening port: `proxyPort`
 
-The proxy imports `http` from `dependency.map.js` and loads runtime settings from
-`config.map.js`, which merges `json/config.json` and `json/app.json` (same
+The proxy imports `http` from `provider/dependency.map.js` and loads runtime settings from
+`provider/config.map.js`, which merges `json/config.json` and `json/app.json` (same
 spread order as in code: config, then app). Destructured names include
 `TARGET_HOST` / `TARGET_PORT` (`host` / `port`), `proxyPort`, `PROXY_TIMEOUT`,
 `HEADERS_TIMEOUT`, `KEEP_ALIVE_TIMEOUT`, `SHUTDOWN_TIMEOUT`, `rateLimiting`, and
@@ -133,7 +133,7 @@ Shared shutdown logic used by `proxy.js` and `index.js`:
 | Express worker / standalone | `server.close()`, track active `res` until `finish`/`close`, same timeout and exit codes |
 | Cluster primary | `registerClusterPrimaryShutdown()`: IPC `shutdown` to workers, wait for worker exits, `worker.kill()` on timeout; no HTTP server |
 
-`SIGTERM` and `SIGINT` handlers are registered once per process and are idempotent. `interceptor.map.js` exports `markClusterShuttingDown` from `cluster.interceptor.js`.
+`SIGTERM` and `SIGINT` handlers are registered once per process and are idempotent. `provider/interceptor.map.js` exports `markClusterShuttingDown` from `cluster.interceptor.js`.
 
 ## 4. Middleware Composition
 
@@ -161,7 +161,9 @@ This function enables the custom error interceptor only when `errorInterceptor` 
 
 ## 5. Dependency and Registry Layers
 
-### `dependency.map.js`
+Registry modules live under `provider/` so entry points and interceptors share one import path.
+
+### `provider/dependency.map.js`
 
 This file centralizes shared libraries used across the codebase:
 
@@ -177,7 +179,7 @@ This file centralizes shared libraries used across the codebase:
 
 This acts as a lightweight dependency registry and helps keep import points consistent.
 
-### `interceptor.map.js`
+### `provider/interceptor.map.js`
 
 This file maps logical middleware names to concrete implementation modules:
 
@@ -192,16 +194,16 @@ This file maps logical middleware names to concrete implementation modules:
 
 This creates a single place where middleware can be registered or extended without changing multiple import sites.
 
-### `config.map.js`
+### `provider/config.map.js`
 
-This file mirrors the registry pattern used by `dependency.map.js` and
-`interceptor.map.js`: one import surface for configuration consumed by the
-reverse proxy. It requires `json/config.json` and `json/app.json` and exports
-their properties as a single object (`{ ...config, ...app }`).
+This file mirrors the registry pattern used by `provider/dependency.map.js` and
+`provider/interceptor.map.js`: one import surface for merged configuration. It
+requires `json/config.json` and `json/app.json` and exports their properties as
+a single object (`{ ...config, ...app }`).
 
-Only `proxy.js` uses this module today. The Express entry (`index.js`) and
-`middleware.loader.js` still read the JSON files directly, so both paths remain
-valid while editing files under `json/`.
+`index.js` and `proxy.js` import listen addresses, shutdown timeouts, clustering,
+and proxy-specific flags from this module. `middleware.loader.js` still requires
+`json/config.json` directly for Express middleware toggles.
 
 ## 6. Optional Interceptors
 
@@ -263,7 +265,7 @@ Logged `requestId` is resolved as `req.requestId`, then the incoming `x-request-
 
 File: `interceptors/response.interceptor.js`
 
-When `response_interceptor` is `true`, this middleware starts a timer and listens for `res` `"finish"`. It logs `method`, `originalUrl`, `statusCode`, numeric `durationMs` (via `performance` from `dependency.map.js`), `contentLength` from `res.getHeader("content-length")`, and the same `requestId` resolution as the request logger.
+When `response_interceptor` is `true`, this middleware starts a timer and listens for `res` `"finish"`. It logs `method`, `originalUrl`, `statusCode`, numeric `durationMs` (via `performance` from `provider/dependency.map.js`), `contentLength` from `res.getHeader("content-length")`, and the same `requestId` resolution as the request logger.
 
 Console output uses the prefix `response:` plus `JSON.stringify` of the summary
 object. When `WRITE_L0G` is true, each summary is also appended to the dated
@@ -317,7 +319,7 @@ This is a multi-process scaling pattern for local concurrency experiments rather
 
 File: `layers/graceful.shutdown.layer.js`
 
-Exports `gracefulShutdown()`, `triggerGracefulShutdown()`, `isShuttingDown()`, `registerClusterPrimaryShutdown()`, and `registerWorkerShutdownMessage()`. Uses `SHUTDOWN_TIMEOUT` from `json/app.json`. Destroys remaining tracked sockets (upstream `ClientRequest` or `res.socket`) when the shutdown deadline expires.
+Exports `gracefulShutdown()`, `triggerGracefulShutdown()`, `isShuttingDown()`, `registerClusterPrimaryShutdown()`, and `registerWorkerShutdownMessage()`. Callers pass `SHUTDOWN_TIMEOUT` from `provider/config.map.js` (defined in `json/app.json`). Destroys remaining tracked sockets (upstream `ClientRequest` or `res.socket`) when the shutdown deadline expires.
 
 ## 7. Configuration Model
 
@@ -339,7 +341,7 @@ This file defines connection and service values:
 }
 ```
 
-It is also used for encryption-related settings. For `proxy.js`, `host` and `port` are the upstream target; timeout fields supply millisecond values paired with `ENABLE_*` flags in `json/config.json`. `SHUTDOWN_TIMEOUT` bounds graceful shutdown for the proxy, each Express worker, and cluster primary worker coordination.
+It is also used for encryption-related settings. Entry points read these values through `provider/config.map.js`. For `proxy.js`, `host` and `port` are the upstream target; timeout fields supply millisecond values paired with `ENABLE_*` flags in `json/config.json`. `SHUTDOWN_TIMEOUT` bounds graceful shutdown for the proxy, each Express worker, and cluster primary worker coordination.
 
 ### `json/config.json`
 
