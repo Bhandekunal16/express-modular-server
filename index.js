@@ -2,7 +2,7 @@ const { express, cluster } = require("./provider/dependency.map");
 const {
   clusterInterceptor,
   markClusterShuttingDown,
-} = require("./interceptor.map");
+} = require("./provider/interceptor.map");
 const { host, port, SHUTDOWN_TIMEOUT } = require("./json/app.json");
 const { clustering } = require("./json/config.json");
 const { middleware, errorMiddleware } = require("./middleware.loader");
