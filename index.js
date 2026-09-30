@@ -60,7 +60,7 @@ if (clustering && cluster.isPrimary) {
   errorMiddleware(app);
 
   const server = app.listen(port, host, () => {
-    console.log(`http://${host}:${port}`);
+    console.log(`Backend server (http://${host}:${port})`);
   });
 
   const serverName = clustering ? "Express worker" : "Express";

@@ -92,7 +92,7 @@ if (ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT) {
 }
 
 server.listen(proxyPort, TARGET_HOST, () => {
-  console.log(`http://${TARGET_HOST}:${proxyPort}`);
+  console.log(`Proxy server (http://${TARGET_HOST}:${proxyPort})`);
 });
 
 gracefulShutdown({
