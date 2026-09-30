@@ -17,8 +17,11 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 .
 ├── index.js
 ├── proxy.js
-├── createExpressApp.js
+├── createExpressApp.js   # exports bootstrap() for Express app wiring
 ├── createProxyServer.js
+├── proxy/
+│   ├── proxy.timeout.handler.js
+│   └── proxy.request.abort.handler.js
 ├── middleware.loader.js
 ├── jest.config.js
 ├── test/
@@ -356,14 +359,18 @@ from `provider/config.map.js` (values defined in `json/app.json`).
 
 ## How the Proxy Works
 
-`proxy.js` uses `http` from `provider/dependency.map.js` and reads `host`, `port`,
-`proxyPort`, timeout values, and `ENABLE_*` / `rateLimiting` flags from
-`provider/config.map.js` (all merged `json/` settings). It listens
-on `proxyPort` and forwards to `host`:`port` (the Express API by default).
+[`proxy.js`](proxy.js) loads config from `provider/config.map.js`, builds the server via
+[`createProxyServer.js`](createProxyServer.js), applies client `headersTimeout` /
+`keepAliveTimeout`, listens on `proxyPort`, and registers graceful shutdown.
+
+`createProxyServer` uses `http` from `provider/dependency.map.js` and forwards to
+`host`:`port` (the Express API by default).
 
 1. Optional rate limiting (`layers/rate.limiting.layer.js`); over-limit clients get **429** without forwarding.
 2. Pipes the client request to an outbound `http.request` with the same method, path, and headers.
-3. Streams the upstream response back to the client.
+3. Upstream **504** handling when enabled: [`proxy/proxy.timeout.handler.js`](proxy/proxy.timeout.handler.js) (`updateRequestTimeout` / `updateResponseTimeout`).
+4. Client abort/error handling: [`proxy/proxy.request.abort.handler.js`](proxy/proxy.request.abort.handler.js) destroys the upstream request when the client disconnects.
+5. Streams the upstream response back to the client.
 
 **Errors and timeouts**
 
@@ -371,7 +378,7 @@ on `proxyPort` and forwards to `host`:`port` (the Express API by default).
 |-----------|-------------|----------------|
 | Upstream connection error | 502 | `Bad Gateway` |
 | Upstream request/response exceeds `PROXY_TIMEOUT` (when enabled) | 504 | `Gateway Timeout` |
-| Client aborts (`req` `"aborted"`) | — | upstream request destroyed; no forced client response |
+| Client aborts, errors, or early `close` (`proxy.request.abort.handler`) | — | upstream `proxyReq` destroyed; no forced client response |
 | Request received during graceful shutdown | 503 | `Service Unavailable` |
 
 Optional `server.headersTimeout` and `server.keepAliveTimeout` apply to the client-facing proxy server when the `ENABLE_CLIENT_*` flags are true.
@@ -521,7 +528,7 @@ Integration tests use ephemeral ports, temporary log directories, and mocked `pr
 
 ### Coverage focus
 
-Coverage prioritizes `provider/`, `layers/`, `interceptors/`, `core/`, `middleware.loader.js`, `createExpressApp.js`, and `createProxyServer.js`. Thin entry files (`index.js`, `proxy.js`) are exercised manually.
+Coverage prioritizes `provider/`, `layers/`, `interceptors/`, `core/`, `proxy/`, `middleware.loader.js`, `createExpressApp.js`, and `createProxyServer.js`. Thin entry files (`index.js`, `proxy.js`) are exercised manually.
 
 ### Known limitations
 

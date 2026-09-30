@@ -25,8 +25,11 @@ It is not a production-grade security or deployment architecture. It is best sui
 Proxy Server
 ├── index.js                     # Express app entry point
 ├── proxy.js                    # Reverse proxy entry point
-├── createExpressApp.js         # Express app factory (used by index.js and tests)
+├── createExpressApp.js         # Express bootstrap (exports bootstrap(); used by index.js and tests)
 ├── createProxyServer.js        # Reverse proxy factory (used by proxy.js and tests)
+├── proxy/
+│   ├── proxy.timeout.handler.js       # Upstream request/response 504 timeouts
+│   └── proxy.request.abort.handler.js # Client abort/error → destroy upstream
 ├── middleware.loader.js        # Central middleware registration
 ├── jest.config.js              # Jest test runner configuration
 ├── test/                       # Automated unit and integration tests
@@ -70,14 +73,16 @@ The main API server is created with Express and reads `host`, `port`,
 `SHUTDOWN_TIMEOUT`, and `clustering` from `provider/config.map.js` (merged from
 `json/` files; see §5 and §7).
 
-The server performs the following steps:
+`index.js` calls `bootstrap()` from `createExpressApp.js`, which:
 
-1. creates an Express application instance
-2. registers base middleware through `middleware(app)`
-3. registers middleware that tracks in-flight responses in a `Set` (for graceful shutdown)
-4. defines a root route at `GET /` and a 404 fallback route
-5. if `clustering` and primary: runs `clusterInterceptor()` and `registerClusterPrimaryShutdown()` (no HTTP server)
-6. otherwise: registers `errorMiddleware(app)`, calls `app.listen()`, and registers `gracefulShutdown()` on the returned server; cluster workers also listen for a `shutdown` IPC message from the primary
+1. creates an Express application and registers middleware through `middleware(app)`
+2. tracks in-flight responses in a `Set` (for graceful shutdown)
+3. defines `GET /` and a 404 fallback route
+
+Then `index.js`:
+
+4. if `clustering` and primary: runs `clusterInterceptor()` and `registerClusterPrimaryShutdown()` (no HTTP server)
+5. otherwise: `registerErrorMiddleware(app)`, `app.listen()`, and `gracefulShutdown()`; cluster workers also handle a `shutdown` IPC message from the primary
 
 The root route responds with a simple JSON payload:
 
@@ -87,32 +92,27 @@ The root route responds with a simple JSON payload:
 
 This keeps the API intentionally minimal while proving the request lifecycle and middleware flow.
 
-### 3.2 Reverse Proxy (`proxy.js`)
+### 3.2 Reverse Proxy (`proxy.js` + `createProxyServer.js`)
 
-The reverse proxy is a Node.js `http` server. It does not use Express; it creates a raw HTTP server and forwards each incoming request to a target service:
+The reverse proxy is a Node.js `http` server built by `createProxyServer(config)`; `proxy.js` is the entry point that loads `provider/config.map.js`, listens on `proxyPort`, applies client-facing timeouts, and registers graceful shutdown. It does not use Express.
 
-- target host: `TARGET_HOST`
-- target port: `TARGET_PORT`
-- proxy listening port: `proxyPort`
+- target host / port: `host` / `port` from config (aliased as `TARGET_HOST` / `TARGET_PORT` in the factory)
+- proxy listening port: `proxyPort` (set in `proxy.js` only)
 
-The proxy imports `http` from `provider/dependency.map.js` and loads runtime settings from
-`provider/config.map.js`, which merges all primary `json/` settings (see
-§5). Destructured names include
-`TARGET_HOST` / `TARGET_PORT` (`host` / `port`), `proxyPort`, `PROXY_TIMEOUT`,
-`HEADERS_TIMEOUT`, `KEEP_ALIVE_TIMEOUT`, `SHUTDOWN_TIMEOUT`, `rateLimiting`, and
-the four `ENABLE_*` timeout toggles.
+Runtime settings come from `provider/config.map.js` (see §5), including `PROXY_TIMEOUT`, `rateLimiting`, and the four `ENABLE_*` toggles.
 
-1. returns **503** `Service Unavailable` when graceful shutdown has started (`isShuttingDown()`)
-2. optionally runs the shared rate limiting layer when `rateLimiting` is true (429 and no forward if the limit is exceeded)
-3. reads the request URL, method, and headers and pipes the body to an outbound `http.request` toward `host`:`port`, tracking each upstream `proxyReq` in a `Set` until `close`
-4. optionally applies `PROXY_TIMEOUT` to the upstream request socket when `ENABLE_UPSTREAM_REQUEST_TIMEOUT` is true (504 `Gateway Timeout` on expiry)
-5. streams the upstream response to the client; optionally applies `PROXY_TIMEOUT` to the upstream response when `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` is true (504 on expiry)
-6. returns `502 Bad Gateway` if the upstream request errors
-7. destroys the upstream request if the client aborts or the client request errors
-8. before `listen`, optionally sets `server.headersTimeout` and `server.keepAliveTimeout` when `ENABLE_CLIENT_HEADERS_TIMEOUT` and `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` are true
-9. after `listen`, registers `gracefulShutdown()` from `layers/graceful.shutdown.layer.js` with `activeRequests` set to the upstream request tracker
+Request flow inside `createProxyServer`:
 
-This is a classic simple reverse proxy pattern and is useful for learning how request forwarding works without a specialized proxy framework.
+1. returns **503** when `isShuttingDown()` is true
+2. optional rate limiting (`layers/rate.limiting.layer.js`) → **429** without forwarding
+3. outbound `http.request` with the same method, path, and headers; each `proxyReq` tracked in a `Set` until `close`
+4. when `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` is true, `proxy/proxy.timeout.handler.js` → `updateResponseTimeout` (**504** on expiry)
+5. when `ENABLE_UPSTREAM_REQUEST_TIMEOUT` is true, `updateRequestTimeout` on the upstream request (**504** on expiry)
+6. **502** on upstream connection errors
+7. `proxy/proxy.request.abort.handler.js` wires client `aborted`, `error`, and incomplete `close` to destroy the upstream request
+8. `req.pipe(proxyReq)` streams the body
+
+`proxy.js` additionally sets `server.headersTimeout` / `server.keepAliveTimeout` when the client `ENABLE_CLIENT_*` flags are true, then calls `gracefulShutdown()` with the factory’s `activeProxyRequests` set.
 
 ### 3.3 Cluster Supervisor (`interceptors/cluster.interceptor.js`)
 
@@ -527,7 +527,7 @@ This project follows a deliberately simple layered architecture:
 - shared `layers/` modules (rate limiting and graceful shutdown on the proxy; request IDs and shutdown on Express)
 - JSON-based configuration aggregated through `provider/config.map.js`
 - minimal helper utilities
-- raw Node.js proxying for request forwarding
+- raw Node.js proxying for request forwarding, with `proxy/` helpers for timeouts and client disconnects
 
 This keeps the system approachable while exposing the essential principles behind web servers, reverse proxies, middleware composition, and lightweight request processing.
 
@@ -537,10 +537,10 @@ The project uses **Jest** (runner, mocks, timers, coverage) and **Supertest** (H
 
 | Area | Approach |
 |------|----------|
-| Unit | Direct calls to layers/interceptors; `jest.resetModules` + `doMock` for `provider/config.map` |
+| Unit | Direct calls to layers/interceptors and `proxy/` handlers; `jest.resetModules` + `doMock` for `provider/config.map` |
 | Middleware | Spy on `app.use` with mocked interceptor map |
 | Proxy | `createProxyServer(config, deps)` with local upstream `http` servers on port `0` |
-| API | `createExpressApp()` via `test/helpers/createTestApp.js` (reloads modules; disables encryption/logging noise) |
+| API | `bootstrap()` from `createExpressApp.js` via `test/helpers/createTestApp.js` (reloads modules; disables encryption/logging noise) |
 | Graceful shutdown | `resetShutdownStateForTests()` when `NODE_ENV=test`; global `process.exit` mock in `test/setup/jest.setup.js` |
 | Files | `process.cwd()` pointed at temp dirs; no writes to project `logs/` |
 

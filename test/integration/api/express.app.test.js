@@ -3,8 +3,8 @@ const { loadCreateExpressApp } = require("../../helpers/createTestApp");
 
 describe("API integration", () => {
   it("GET / returns hello world JSON", async () => {
-    const { createExpressApp, registerErrorMiddleware } = loadCreateExpressApp();
-    const { app } = createExpressApp();
+    const { bootstrap, registerErrorMiddleware } = loadCreateExpressApp();
+    const { app } = bootstrap();
     registerErrorMiddleware(app);
 
     const res = await request(app).get("/");
@@ -14,8 +14,8 @@ describe("API integration", () => {
   });
 
   it("unknown route returns 404 contract", async () => {
-    const { createExpressApp, registerErrorMiddleware } = loadCreateExpressApp();
-    const { app } = createExpressApp();
+    const { bootstrap, registerErrorMiddleware } = loadCreateExpressApp();
+    const { app } = bootstrap();
     registerErrorMiddleware(app);
 
     const res = await request(app).get("/missing");

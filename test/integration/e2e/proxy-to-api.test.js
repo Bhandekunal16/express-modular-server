@@ -10,8 +10,8 @@ describe("proxy to API e2e", () => {
   let proxyPort;
 
   beforeEach(async () => {
-    const { createExpressApp, registerErrorMiddleware } = loadCreateExpressApp();
-    const { app } = createExpressApp();
+    const { bootstrap, registerErrorMiddleware } = loadCreateExpressApp();
+    const { app } = bootstrap();
     registerErrorMiddleware(app);
 
     apiServer = await new Promise((resolve) => {
@@ -52,8 +52,8 @@ describe("proxy to API e2e", () => {
   });
 
   it("direct API remains reachable when proxy is up", async () => {
-    const { createExpressApp, registerErrorMiddleware } = loadCreateExpressApp();
-    const { app } = createExpressApp();
+    const { bootstrap, registerErrorMiddleware } = loadCreateExpressApp();
+    const { app } = bootstrap();
     registerErrorMiddleware(app);
     const res = await request(app).get("/");
     expect(res.body.message).toBe("hello world");

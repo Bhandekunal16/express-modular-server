@@ -8,6 +8,7 @@ module.exports = {
     "layers/**/*.js",
     "interceptors/**/*.js",
     "core/**/*.js",
+    "proxy/**/*.js",
     "middleware.loader.js",
     "createExpressApp.js",
     "createProxyServer.js",
