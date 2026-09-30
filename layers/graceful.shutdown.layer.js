@@ -1,4 +1,4 @@
-const { cluster } = require("../provider/dependency.map");
+const { cluster, logByte } = require("../provider/dependency.map");
 
 let shutdownStarted = false;
 let shutdownConfig = null;
@@ -14,7 +14,7 @@ function waitForActiveRequests(activeRequests, name, checkIntervalMs = 100) {
       return;
     }
 
-    console.log(`${name}: waiting for active requests`);
+    logByte.debug(`${name}: waiting for active requests`);
 
     const interval = setInterval(() => {
       if (!activeRequests || activeRequests.size === 0) {
@@ -29,7 +29,7 @@ function destroyActiveRequests(activeRequests, name) {
   if (!activeRequests || activeRequests.size === 0) return;
 
   const count = activeRequests.size;
-  console.log(`${name}: destroying ${count} active requests`);
+  logByte.error(`${name}: destroying ${count} active requests`);
 
   for (const item of activeRequests) {
     try {
@@ -58,23 +58,23 @@ function runGracefulShutdown(signal) {
   const { server, name, shutdownTimeout, activeRequests, onShutdown } =
     shutdownConfig;
 
-  console.log(`${signal} received. Starting graceful shutdown...`);
-  console.log(`${name}: stopping new requests`);
+  logByte.error(`${signal} received. Starting graceful shutdown...`);
+  logByte.error(`${name}: stopping new requests`);
 
   if (typeof onShutdown === "function") onShutdown();
 
   const forceTimer = setTimeout(() => {
-    console.log(`${name}: shutdown timeout`);
+    logByte.error(`${name}: shutdown timeout`);
     destroyActiveRequests(activeRequests, name);
     process.exit(1);
   }, shutdownTimeout);
 
   server.close((err) => {
-    if (err) console.error(`${name}: server.close error:`, err.message);
+    if (err) logByte.error(`${name}: server.close error:`, err.message);
 
     waitForActiveRequests(activeRequests, name).then(() => {
       clearTimeout(forceTimer);
-      console.log(`${name}: shutdown complete`);
+      logByte.error(`${name}: shutdown complete`);
       process.exit(0);
     });
   });
