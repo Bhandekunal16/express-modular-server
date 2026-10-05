@@ -96,7 +96,7 @@ This keeps the API intentionally minimal while proving the request lifecycle and
 
 ### 3.2 Backend Replication (`replica.js`)
 
-`replica.js` receives the Express application, host, configured base `port`, and the `REPLICA` flag. When `REPLICA` is `true`, it creates HTTP servers on `port`, `port + 1`, and `port + 2`. When `REPLICA` is `false`, it creates only the base `port`. For `port: 3000`, this means either `3000`, `3001`, `3002` or only `3000`. The function always returns an array of server objects so each listener can be registered with graceful shutdown. All listeners use the same Express `app` instance and therefore share its middleware, routes, and application state. Replication creates listening ports only; it does not implement proxy load balancing. The reverse proxy must explicitly select among available backend ports if distribution such as round-robin is required.
+`replica.js` receives the Express application, host, configured base `port`, the `REPLICA` flag, and the configured `replicas` count. When `REPLICA` is `true`, it creates the configured number of HTTP servers starting at the base port (`port`, `port + 1`, `port + 2`, ...). When `REPLICA` is `false`, it creates only the base `port`. For `port: 3000` and `replicas: 3`, this means `3000`, `3001`, and `3002`; with `REPLICA: false`, only `3000` is created. The function always returns an array of server objects so each listener can be registered with graceful shutdown. All listeners use the same Express `app` instance and therefore share its middleware, routes, and application state. Replication creates listening ports only; it does not implement proxy load balancing. The reverse proxy must explicitly select among available backend ports if distribution such as round-robin is required.
 
 ### 3.3 Reverse Proxy (`proxy.js`)
 
@@ -135,7 +135,7 @@ The supervisor process:
 - forks one worker per core
 - listens for worker exits and restarts a replacement worker unless `markClusterShuttingDown()` has been called during graceful shutdown
 
-The actual HTTP servers are not started in the primary process. Instead, each worker starts one listener when `REPLICA` is false, or three listeners (`port`, `port + 1`, `port + 2`) when `REPLICA` is true. With clustering enabled, replication occurs in each worker process, so the number of listening sockets grows with the worker count and replica count.
+The actual HTTP servers are not started in the primary process. Instead, each worker starts one listener when `REPLICA` is false, or `replicas` listeners (`port`, `port + 1`, ... `port + replicas - 1`) when `REPLICA` is true. With clustering enabled, replication occurs in each worker process, so the number of listening sockets grows with the worker count and configured replica count.
 
 ### 3.5 Graceful shutdown (`layers/graceful.shutdown.layer.js`)
 
@@ -374,7 +374,8 @@ This file defines connection and service values:
   "PROXY_TIMEOUT": 30000,
   "HEADERS_TIMEOUT": 10000,
   "KEEP_ALIVE_TIMEOUT": 5000,
-  "SHUTDOWN_TIMEOUT": 10000
+  "SHUTDOWN_TIMEOUT": 10000,
+  "replicas": 3
 }
 ```
 
@@ -398,12 +399,11 @@ This file toggles middleware behavior:
   "ENABLE_UPSTREAM_REQUEST_TIMEOUT": true,
   "ENABLE_UPSTREAM_RESPONSE_TIMEOUT": true,
   "ENABLE_CLIENT_HEADERS_TIMEOUT": true,
-  "ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT": true,
-  "REPLICA": true
+  "ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT": true
 }
 ```
 
-These flags decide which optional services are enabled during app startup. Express-related flags (`helmet_interceptor`, `requestId`, `response_interceptor`, interceptors, `clustering`, `REPLICA`) apply to `index.js`. `REPLICA` controls whether `replica.js` starts one listener or three listeners. Proxy-only flags are `rateLimiting` and the four `ENABLE_*` timeout toggles (durations in `json/app.json`).
+These flags decide which optional services are enabled during app startup. Express-related flags (`helmet_interceptor`, `requestId`, `response_interceptor`, interceptors, `clustering`, `REPLICA`) apply to `index.js`. `REPLICA` controls whether `replica.js` starts one listener or the configured number of listeners from `replicas`. Proxy-only flags are `rateLimiting` and the four `ENABLE_*` timeout toggles (durations in `json/app.json`).
 
 ### `json/logger.config.json`
 
@@ -442,7 +442,7 @@ Client
   ↓
 Express app (index.js)
   ↓
-Backend listener(s): port, or port / port+1 / port+2 when REPLICA is enabled
+Optional Backend listener(s): port, or port through port + replicas - 1 when REPLICA is enabled
   ↓
 Optional request ID middleware
   ↓
