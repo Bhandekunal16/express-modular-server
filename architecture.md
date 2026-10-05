@@ -2,7 +2,7 @@
 
 This project is a lightweight Node.js service that demonstrates several important patterns in a single codebase:
 
-- an Express API server for local development and experimentation
+- an Express API server for local development and experimentation, replicated across three backend listener ports
 - an HTTP reverse proxy that forwards requests to a backend service
 - optional process clustering for multi-worker request handling
 
@@ -27,6 +27,7 @@ Proxy Server
 ├── proxy.js                    # Reverse proxy entry point
 ├── app.process.sh              # Background both entry points; SIGTERM both when either exits
 ├── createProxyServer.js        # Test-only reverse proxy factory
+├── replica.js                  # replicate app server
 ├── proxy/
 │   ├── proxy.request.tracker.js       # activeRequests Set for graceful shutdown
 │   ├── proxy.timeout.handler.js       # Upstream request/response 504 timeouts
@@ -76,14 +77,15 @@ The main API server is created with Express and reads `host`, `port`,
 `json/` files; see §5 and §7).
 
 `index.js` is the production entry: Express app creation, `middleware(app)`, active-request
-tracking, routes, `errorMiddleware(app)`, cluster primary vs worker branching, `listen`, and
-`gracefulShutdown()`.
+tracking, routes, `errorMiddleware(app)`, cluster primary vs worker branching, creation of three
+backend listeners (`port`, `port + 1`, `port + 2`) through `replicate()`, and `gracefulShutdown()`
+for each listener.
 
 [`test/helpers/createExpressApp.js`](test/helpers/createExpressApp.js) mirrors the same
 middleware and routes for Jest (`bootstrap()` / `registerErrorMiddleware()`), loaded via
 `test/helpers/createTestApp.js` with mocked config.
 
-On listen it logs `Backend server (http://...)` with `logByte.info` from `provider/dependency.map.js` (`log-byte`). Shutdown start is `logByte.warn` (`Express: shutdown started` or `Express worker: shutdown started`).
+Each replicated listener logs `Backend server (http://...)` with `logByte.info` from `provider/dependency.map.js` (`log-byte`). Shutdown start is `logByte.warn` (`Express: shutdown started` or `Express worker: shutdown started`).
 
 The root route responds with a simple JSON payload:
 
@@ -93,7 +95,27 @@ The root route responds with a simple JSON payload:
 
 This keeps the API intentionally minimal while proving the request lifecycle and middleware flow.
 
-### 3.2 Reverse Proxy (`proxy.js`)
+### 3.2 Backend Replication (`replica.js`)
+
+`replica.js` receives the Express application, host, and configured base `port`. It creates three
+HTTP servers from the same Express application:
+
+```text
+node 1 → port
+node 2 → port + 1
+node 3 → port + 2
+```
+
+For the default `port: 3000`, the listeners are `3000`, `3001`, and `3002`. The function returns
+an array containing all three server objects so the caller can register each one with graceful
+shutdown. The three listeners share the same middleware, routes, and application state because
+they are created from the same Express `app` instance.
+
+Replication creates multiple listening ports; it does not itself implement proxy load balancing.
+The reverse proxy must explicitly select among these ports if round-robin or another distribution
+strategy is required.
+
+### 3.3 Reverse Proxy (`proxy.js`)
 
 The reverse proxy is a Node.js `http` server defined in `proxy.js`. It loads `provider/config.map.js`, composes `proxy/` helpers with `layers/`, listens on `proxyPort`, and registers graceful shutdown. It does not use Express.
 
@@ -119,7 +141,7 @@ Request flow (same shape in `proxy.js` and the test factory):
 
 In `proxy.js`, `server.headersTimeout` / `server.keepAliveTimeout` are set when the client `ENABLE_CLIENT_*` flags are true, then `gracefulShutdown()` runs with the tracker’s `activeRequests` set. Listen success is `logByte.info` (`Proxy server (http://...)`).
 
-### 3.3 Cluster Supervisor (`interceptors/cluster.interceptor.js`)
+### 3.4 Cluster Supervisor (`interceptors/cluster.interceptor.js`)
 
 The clustering feature uses Node.js's built-in `cluster` module to create worker processes when the application is configured with `clustering: true` in `json/config.json`.
 
@@ -130,16 +152,16 @@ The supervisor process:
 - forks one worker per core
 - listens for worker exits and restarts a replacement worker unless `markClusterShuttingDown()` has been called during graceful shutdown
 
-The actual HTTP server is not started in the primary process. Instead, the workers bind to the configured port, allowing the app to distribute incoming work across multiple processes.
+The actual HTTP servers are not started in the primary process. Instead, each worker starts the three replicated listeners (`port`, `port + 1`, `port + 2`). With clustering enabled, this replication occurs in each worker process, so the number of listening sockets grows with the worker count.
 
-### 3.4 Graceful shutdown (`layers/graceful.shutdown.layer.js`)
+### 3.5 Graceful shutdown (`layers/graceful.shutdown.layer.js`)
 
 Shared shutdown logic used by `proxy.js` and `index.js`:
 
 | Role | Behavior |
 |------|----------|
 | Proxy | `server.close()`, 503 for new requests while draining, wait for active upstream `proxyReq`, `exit(0)` or force-destroy and `exit(1)` after `SHUTDOWN_TIMEOUT` |
-| Express worker / standalone | `server.close()`, track active `res` until `finish`/`close`, same timeout and exit codes |
+| Express worker / standalone | Calls `server.close()` for each replicated listener, tracks active `res` until `finish`/`close`, same timeout and exit codes |
 | Cluster primary | `registerClusterPrimaryShutdown()`: IPC `shutdown` to workers, wait for worker exits, `worker.kill()` on timeout; no HTTP server |
 
 `SIGTERM` and `SIGINT` handlers are registered once per process and are idempotent. `provider/interceptor.map.js` exports `markClusterShuttingDown` from `cluster.interceptor.js`.
@@ -434,6 +456,8 @@ The layer reads `windowMs` and `limit` from `provider/config.map.js` only. The c
 Client
   ↓
 Express app (index.js)
+  ↓
+Replicated backend listeners: port / port+1 / port+2
   ↓
 Optional request ID middleware
   ↓

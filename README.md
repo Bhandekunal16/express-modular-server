@@ -6,7 +6,7 @@ A lightweight Node.js project that runs a small Express API and a reverse proxy.
 
 This project contains two separate server entry points:
 
-- `index.js` — runs the Express app (production entry)
+- `index.js` — runs the Express app (production entry) and creates three backend replicas
 - `proxy.js` — runs the HTTP reverse proxy
 
 The app is configured with JSON files under the `json/` folder, which makes it easy to adjust the host and port values without changing code.
@@ -113,8 +113,8 @@ Settings live under `json/` on disk. At runtime,
 The values are used as follows:
 
 - `host` — bind address for Express and the proxy listen socket (`server.listen`); `proxy.js` also uses this value as the upstream hostname. The test factory in `createProxyServer.js` rewrites `0.0.0.0` to `127.0.0.1` for that upstream hostname
-- `port` — Express app port (**upstream** target for `proxy.js`; must not be confused with `proxyPort`)
-- `proxyPort` — reverse proxy **listen** port only (clients connect here; traffic is forwarded to `port`)
+- `port` — base Express backend port; `index.js` creates three backend listeners on `port`, `port + 1`, and `port + 2`
+- `proxyPort` — reverse proxy **listen** port only (clients connect here); traffic is forwarded to the configured upstream target
 - `PROXY_TIMEOUT` — milliseconds used for upstream request/response socket timeouts when the matching flags in `json/config.json` are enabled
 - `HEADERS_TIMEOUT` — `server.headersTimeout` on the proxy when `ENABLE_CLIENT_HEADERS_TIMEOUT` is true
 - `KEEP_ALIVE_TIMEOUT` — `server.keepAliveTimeout` on the proxy when `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` is true
@@ -329,13 +329,23 @@ npm install
 node index.js
 ```
 
-This server listens on:
+The Express entry point creates three backend listeners using the configured `port` as the base port. With the default configuration, the servers are:
 
-```bash
+```text
 http://0.0.0.0:3000
+http://0.0.0.0:3001
+http://0.0.0.0:3002
 ```
 
-Open:
+The replica ports are calculated as:
+
+```text
+node 1 = port
+node 2 = port + 1
+node 3 = port + 2
+```
+
+Open any backend directly, for example:
 
 ```bash
 http://localhost:3000/
@@ -346,6 +356,12 @@ Expected response:
 ```json
 { "message": "hello world" }
 ```
+
+### Backend replicas and proxy
+
+`index.js` starts three HTTP servers from the same Express application instance. Each server has its own listening socket, while routes and middleware are shared by the application instance. The replica helper returns the three server objects so each listener can be registered with graceful shutdown.
+
+The current `proxy.js` configuration still has a single `TARGET_PORT` value. Creating three backend listeners does **not** by itself make the proxy round-robin between them. Round-robin behavior requires the proxy target-selection logic to explicitly select among `port`, `port + 1`, and `port + 2`.
 
 ### Start the proxy server
 
@@ -476,7 +492,7 @@ When clustering is enabled:
 - the primary process acts as a supervisor
 - it forks worker processes based on the available CPU count
 - a worker restarts itself if it exits unexpectedly (unless intentional shutdown is in progress via `markClusterShuttingDown()`)
-- only the worker process binds the Express server port and handles incoming HTTP traffic
+- the worker process starts the Express application and its three replicated listeners (`port`, `port + 1`, `port + 2`)
 - the primary coordinates graceful shutdown and does not serve HTTP (see **Graceful shutdown**)
 
 This pattern improves concurrency and can help distribute work across CPU cores for local performance testing.
