@@ -77,9 +77,8 @@ The main API server is created with Express and reads `host`, `port`,
 `json/` files; see §5 and §7).
 
 `index.js` is the production entry: Express app creation, `middleware(app)`, active-request
-tracking, routes, `errorMiddleware(app)`, cluster primary vs worker branching, creation of three
-backend listeners (`port`, `port + 1`, `port + 2`) through `replicate()`, and `gracefulShutdown()`
-for each listener.
+tracking, routes, `errorMiddleware(app)`, cluster primary vs worker branching, creation of one or three backend listeners through `replicate()` depending on the `REPLICA` flag, and
+`gracefulShutdown()` for each listener.
 
 [`test/helpers/createExpressApp.js`](test/helpers/createExpressApp.js) mirrors the same
 middleware and routes for Jest (`bootstrap()` / `registerErrorMiddleware()`), loaded via
@@ -97,23 +96,7 @@ This keeps the API intentionally minimal while proving the request lifecycle and
 
 ### 3.2 Backend Replication (`replica.js`)
 
-`replica.js` receives the Express application, host, and configured base `port`. It creates three
-HTTP servers from the same Express application:
-
-```text
-node 1 → port
-node 2 → port + 1
-node 3 → port + 2
-```
-
-For the default `port: 3000`, the listeners are `3000`, `3001`, and `3002`. The function returns
-an array containing all three server objects so the caller can register each one with graceful
-shutdown. The three listeners share the same middleware, routes, and application state because
-they are created from the same Express `app` instance.
-
-Replication creates multiple listening ports; it does not itself implement proxy load balancing.
-The reverse proxy must explicitly select among these ports if round-robin or another distribution
-strategy is required.
+`replica.js` receives the Express application, host, configured base `port`, and the `REPLICA` flag. When `REPLICA` is `true`, it creates HTTP servers on `port`, `port + 1`, and `port + 2`. When `REPLICA` is `false`, it creates only the base `port`. For `port: 3000`, this means either `3000`, `3001`, `3002` or only `3000`. The function always returns an array of server objects so each listener can be registered with graceful shutdown. All listeners use the same Express `app` instance and therefore share its middleware, routes, and application state. Replication creates listening ports only; it does not implement proxy load balancing. The reverse proxy must explicitly select among available backend ports if distribution such as round-robin is required.
 
 ### 3.3 Reverse Proxy (`proxy.js`)
 
@@ -152,7 +135,7 @@ The supervisor process:
 - forks one worker per core
 - listens for worker exits and restarts a replacement worker unless `markClusterShuttingDown()` has been called during graceful shutdown
 
-The actual HTTP servers are not started in the primary process. Instead, each worker starts the three replicated listeners (`port`, `port + 1`, `port + 2`). With clustering enabled, this replication occurs in each worker process, so the number of listening sockets grows with the worker count.
+The actual HTTP servers are not started in the primary process. Instead, each worker starts one listener when `REPLICA` is false, or three listeners (`port`, `port + 1`, `port + 2`) when `REPLICA` is true. With clustering enabled, replication occurs in each worker process, so the number of listening sockets grows with the worker count and replica count.
 
 ### 3.5 Graceful shutdown (`layers/graceful.shutdown.layer.js`)
 
@@ -161,7 +144,7 @@ Shared shutdown logic used by `proxy.js` and `index.js`:
 | Role | Behavior |
 |------|----------|
 | Proxy | `server.close()`, 503 for new requests while draining, wait for active upstream `proxyReq`, `exit(0)` or force-destroy and `exit(1)` after `SHUTDOWN_TIMEOUT` |
-| Express worker / standalone | Calls `server.close()` for each replicated listener, tracks active `res` until `finish`/`close`, same timeout and exit codes |
+| Express worker / standalone | Calls `server.close()` for each listener returned by `replicate()`, tracks active `res` until `finish`/`close`, same timeout and exit codes |
 | Cluster primary | `registerClusterPrimaryShutdown()`: IPC `shutdown` to workers, wait for worker exits, `worker.kill()` on timeout; no HTTP server |
 
 `SIGTERM` and `SIGINT` handlers are registered once per process and are idempotent. `provider/interceptor.map.js` exports `markClusterShuttingDown` from `cluster.interceptor.js`.
@@ -411,6 +394,7 @@ This file toggles middleware behavior:
   "requestId": true,
   "response_interceptor": true,
   "clustering": true,
+  "REPLICA": true,
   "ENABLE_UPSTREAM_REQUEST_TIMEOUT": true,
   "ENABLE_UPSTREAM_RESPONSE_TIMEOUT": true,
   "ENABLE_CLIENT_HEADERS_TIMEOUT": true,
@@ -419,7 +403,7 @@ This file toggles middleware behavior:
 }
 ```
 
-These flags decide which optional services are enabled during app startup. Express-related flags (`helmet_interceptor`, `requestId`, `response_interceptor`, interceptors, `clustering`) apply to `index.js`. Proxy-only flags are `rateLimiting` and the four `ENABLE_*` timeout toggles (durations in `json/app.json`).
+These flags decide which optional services are enabled during app startup. Express-related flags (`helmet_interceptor`, `requestId`, `response_interceptor`, interceptors, `clustering`, `REPLICA`) apply to `index.js`. `REPLICA` controls whether `replica.js` starts one listener or three listeners. Proxy-only flags are `rateLimiting` and the four `ENABLE_*` timeout toggles (durations in `json/app.json`).
 
 ### `json/logger.config.json`
 
@@ -458,7 +442,7 @@ Client
   ↓
 Express app (index.js)
   ↓
-Optional Replicated backend listeners: port / port+1 / port+2
+Backend listener(s): port, or port / port+1 / port+2 when REPLICA is enabled
   ↓
 Optional request ID middleware
   ↓
