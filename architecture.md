@@ -414,7 +414,8 @@ This file toggles middleware behavior:
   "ENABLE_UPSTREAM_REQUEST_TIMEOUT": true,
   "ENABLE_UPSTREAM_RESPONSE_TIMEOUT": true,
   "ENABLE_CLIENT_HEADERS_TIMEOUT": true,
-  "ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT": true
+  "ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT": true,
+  "REPLICA": true
 }
 ```
 
@@ -457,7 +458,7 @@ Client
   ↓
 Express app (index.js)
   ↓
-Replicated backend listeners: port / port+1 / port+2
+Optional Replicated backend listeners: port / port+1 / port+2
   ↓
 Optional request ID middleware
   ↓

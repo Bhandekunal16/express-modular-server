@@ -7,6 +7,7 @@ const {
   host,
   port,
   SHUTDOWN_TIMEOUT,
+  REPLICA,
   clustering,
 } = require("./provider/config.map");
 const { middleware, errorMiddleware } = require("./middleware.loader");
@@ -61,7 +62,7 @@ if (clustering && cluster.isPrimary) {
   errorMiddleware(app);
 
   const serverName = clustering ? "Express worker" : "Express";
-  const servers = replicate(app, host, port);
+  const servers = replicate(app, host, port, REPLICA);
 
   servers.forEach((server) => {
     gracefulShutdown({
