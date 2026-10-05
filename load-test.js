@@ -1,27 +1,18 @@
 const http = require("http");
 
 const CONFIG = {
-  host: "127.0.0.1",
+  host: "0.0.0.0",
   port: 8000,
   path: "/",
-
-  // Total requests to send.
-  totalRequests: 50000,
-
-  // Maximum concurrent requests.
-  concurrency: 500,
-
-  // Optional request timeout.
+  totalRequests: 100000,
+  concurrency: 1000,
   timeout: 10000,
-
-  // Print progress every N requests.
   progressEvery: 1000,
 };
 
 let completed = 0;
 let successful = 0;
 let failed = 0;
-
 let totalLatency = 0;
 let minLatency = Infinity;
 let maxLatency = 0;
@@ -37,10 +28,7 @@ function nowMs() {
 }
 
 function recordStatus(statusCode) {
-  statusCodes.set(
-    statusCode,
-    (statusCodes.get(statusCode) || 0) + 1
-  );
+  statusCodes.set(statusCode, (statusCodes.get(statusCode) || 0) + 1);
 }
 
 function makeRequest() {
@@ -62,8 +50,7 @@ function makeRequest() {
 
         res.on("end", () => {
           const latency =
-            Number(process.hrtime.bigint() - requestStart) /
-            1_000_000;
+            Number(process.hrtime.bigint() - requestStart) / 1_000_000;
 
           totalLatency += latency;
           minLatency = Math.min(minLatency, latency);
@@ -83,7 +70,7 @@ function makeRequest() {
 
           resolve();
         });
-      }
+      },
     );
 
     req.setTimeout(CONFIG.timeout, () => {
@@ -108,8 +95,7 @@ function percentile(values, percentile) {
 
   const sorted = [...values].sort((a, b) => a - b);
 
-  const index =
-    Math.ceil((percentile / 100) * sorted.length) - 1;
+  const index = Math.ceil((percentile / 100) * sorted.length) - 1;
 
   return sorted[Math.max(0, index)];
 }
@@ -128,15 +114,12 @@ async function worker() {
 
     activeWorkers--;
 
-    if (
-      completed > 0 &&
-      completed % CONFIG.progressEvery === 0
-    ) {
+    if (completed > 0 && completed % CONFIG.progressEvery === 0) {
       const elapsed = nowMs() / 1000;
 
       console.log(
         `Progress: ${completed}/${CONFIG.totalRequests} | ` +
-          `RPS: ${(completed / elapsed).toFixed(2)}`
+          `RPS: ${(completed / elapsed).toFixed(2)}`,
       );
     }
   }
@@ -149,7 +132,9 @@ async function run() {
   console.log("======================================");
   console.log("        Node.js Load Test");
   console.log("======================================");
-  console.log(`Target       : http://${CONFIG.host}:${CONFIG.port}${CONFIG.path}`);
+  console.log(
+    `Target       : http://${CONFIG.host}:${CONFIG.port}${CONFIG.path}`,
+  );
   console.log(`Requests     : ${CONFIG.totalRequests}`);
   console.log(`Concurrency  : ${CONFIG.concurrency}`);
   console.log(`Timeout      : ${CONFIG.timeout} ms`);
@@ -158,11 +143,7 @@ async function run() {
 
   const workers = [];
 
-  for (
-    let i = 0;
-    i < CONFIG.concurrency;
-    i++
-  ) {
+  for (let i = 0; i < CONFIG.concurrency; i++) {
     workers.push(worker());
   }
 
@@ -171,84 +152,52 @@ async function run() {
   const elapsedMs = nowMs();
   const elapsedSeconds = elapsedMs / 1000;
 
-  const requestsPerSecond =
-    completed / elapsedSeconds;
+  const requestsPerSecond = completed / elapsedSeconds;
 
-  const averageLatency =
-    completed > 0
-      ? totalLatency / completed
-      : 0;
+  const averageLatency = completed > 0 ? totalLatency / completed : 0;
 
   console.log("");
   console.log("======================================");
   console.log("             TEST RESULT");
   console.log("======================================");
 
-  console.log(
-    `Duration       : ${elapsedSeconds.toFixed(2)} sec`
-  );
+  console.log(`Duration       : ${elapsedSeconds.toFixed(2)} sec`);
 
-  console.log(
-    `Completed      : ${completed}`
-  );
+  console.log(`Completed      : ${completed}`);
 
-  console.log(
-    `Successful     : ${successful}`
-  );
+  console.log(`Successful     : ${successful}`);
 
-  console.log(
-    `Failed         : ${failed}`
-  );
+  console.log(`Failed         : ${failed}`);
 
-  console.log(
-    `Requests/sec   : ${requestsPerSecond.toFixed(2)}`
-  );
+  console.log(`Requests/sec   : ${requestsPerSecond.toFixed(2)}`);
 
-  console.log(
-    `Average latency: ${averageLatency.toFixed(2)} ms`
-  );
+  console.log(`Average latency: ${averageLatency.toFixed(2)} ms`);
 
   console.log(
     `Min latency    : ${
-      minLatency === Infinity
-        ? "N/A"
-        : minLatency.toFixed(2)
-    } ms`
+      minLatency === Infinity ? "N/A" : minLatency.toFixed(2)
+    } ms`,
   );
 
-  console.log(
-    `Max latency    : ${maxLatency.toFixed(2)} ms`
-  );
+  console.log(`Max latency    : ${maxLatency.toFixed(2)} ms`);
 
   console.log("");
   console.log("Latency percentiles:");
 
   console.log(
-    `P50            : ${percentile(
-      latencySamples,
-      50
-    ).toFixed(2)} ms`
+    `P50            : ${percentile(latencySamples, 50).toFixed(2)} ms`,
   );
 
   console.log(
-    `P90            : ${percentile(
-      latencySamples,
-      90
-    ).toFixed(2)} ms`
+    `P90            : ${percentile(latencySamples, 90).toFixed(2)} ms`,
   );
 
   console.log(
-    `P95            : ${percentile(
-      latencySamples,
-      95
-    ).toFixed(2)} ms`
+    `P95            : ${percentile(latencySamples, 95).toFixed(2)} ms`,
   );
 
   console.log(
-    `P99            : ${percentile(
-      latencySamples,
-      99
-    ).toFixed(2)} ms`
+    `P99            : ${percentile(latencySamples, 99).toFixed(2)} ms`,
   );
 
   console.log("");

@@ -12,5 +12,5 @@
   "algorithm": "sha256",
   "Unicode_Transformation_Format": "utf8",
   "randomString": "1234567890123456",
-  "replicas": 3
+  "replicas": 4
 }
