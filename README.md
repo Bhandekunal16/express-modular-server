@@ -17,7 +17,10 @@ The app is configured with JSON files under the `json/` folder, which makes it e
 .
 ├── index.js
 ├── proxy.js
-├── app.process.sh         # start Express + proxy; SIGTERM both when either exits
+├── app.process.sh         # start Express + proxy locally; SIGTERM both when either exits
+├── docker.process.sh      # build image from dockerFile and start docker compose
+├── docker-compose.yml     # compose definition for the containerized app
+├── dockerFile             # Docker image definition
 ├── createProxyServer.js  # test-only proxy factory
 ├── proxy/
 │   ├── proxy.request.tracker.js
@@ -380,13 +383,27 @@ On listen, the proxy logs `Proxy server (http://...)` with `logByte.info`. The E
 Requests sent to the proxy port are forwarded to the backend `host` and `port`
 from `provider/config.map.js` (values defined in `json/app.json`).
 
-### Start both processes
+### Start both processes locally
 
 ```bash
 bash app.process.sh
 ```
 
 The script backgrounds `node index.js` and `node proxy.js`, keeps both PIDs, and waits until either process exits. It then sends `SIGTERM` to both so the remaining process runs graceful shutdown.
+
+### Start the Docker workflow
+
+```bash
+bash docker.process.sh <image-name> <image-tag>
+```
+
+Example:
+
+```bash
+bash docker.process.sh proxy-server 1.0.0
+```
+
+The script builds the image from `dockerFile`, tags it as `<image-name>:<image-tag>`, and starts the Compose stack defined in `docker-compose.yml`. This is useful when you want to run the project inside the containerized setup instead of the local Node.js process manager.
 
 ## How the Proxy Works
 

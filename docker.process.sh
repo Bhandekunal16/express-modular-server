@@ -6,7 +6,7 @@ IMAGE_TAG="$2"
 CONTAINER_NAME="$1"
 
 if [ -z "$IMAGE_NAME" ] || [ -z "$IMAGE_TAG" ]; then
-    echo "Usage: ./docker.sh <image-name> <image-tag>"
+    echo "Usage: ./docker.process.sh <image-name> <image-tag>"
     exit 1
 fi
 

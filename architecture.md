@@ -25,7 +25,10 @@ It is not a production-grade security or deployment architecture. It is best sui
 Proxy Server
 ├── index.js                     # Express app entry point
 ├── proxy.js                    # Reverse proxy entry point
-├── app.process.sh              # Background both entry points; SIGTERM both when either exits
+├── app.process.sh              # Background both entry points locally; SIGTERM both when either exits
+├── docker.process.sh           # Build image from dockerFile and start docker compose
+├── docker-compose.yml          # Container orchestration for the app
+├── dockerFile                  # Docker image definition
 ├── createProxyServer.js        # Test-only reverse proxy factory
 ├── replica.js                  # replicate app server
 ├── proxy/
@@ -151,7 +154,7 @@ Shared shutdown logic used by `proxy.js` and `index.js`:
 
 `runGracefulShutdown` (proxy and Express) writes through `logByte`: `error` for the signal, stop, destroy, timeout, `server.close` errors, and completion; `debug` while waiting for active requests. `index.js` adds `logByte.warn` for `{name}: shutdown started`. `registerClusterPrimaryShutdown` still uses `console.log` for primary coordination messages.
 
-`app.process.sh` starts both entry points in the background and, when either exits, sends `SIGTERM` to both PIDs.
+`app.process.sh` starts both entry points in the background and, when either exits, sends `SIGTERM` to both PIDs. For containerized runs, `docker.process.sh` builds the image from `dockerFile` and starts the Compose stack so the same service can be launched in a Docker environment.
 
 ## 4. Middleware Composition
 
