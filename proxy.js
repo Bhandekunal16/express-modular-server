@@ -75,6 +75,8 @@ const server = http.createServer((req, res) => {
 
   const targetPort = getNextBackendPort();
 
+  logByte.info(`Proxy -> ${TARGET_HOST}:${targetPort} | ${method} ${path}`);
+
   const options = {
     hostname: TARGET_HOST,
     port: targetPort,
