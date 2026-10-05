@@ -11,5 +11,6 @@
   "encryption_algorithm": "aes-256-cbc",
   "algorithm": "sha256",
   "Unicode_Transformation_Format": "utf8",
-  "randomString": "1234567890123456"
+  "randomString": "1234567890123456",
+  "replicas": 4
 }
