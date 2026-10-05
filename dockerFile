@@ -45,5 +45,5 @@ RUN chmod +x app.process.sh
 # ---------------------------------------------------------
 CMD ["./app.process.sh"]
 
-
-# docker run --rm  -p 8000:8000 -p 4000:4000 -p 4001:4001 -p 4002:4002 -p 4003:4003  node-proxy-app
+# docker build -f dockerFile -t node-proxy-app:0.0.1 .
+# docker --name node-proxy-app run --rm  -p 8000:8000 -p 4000:4000 -p 4001:4001 -p 4002:4002 -p 4003:4003  node-proxy-app:0.0.1
