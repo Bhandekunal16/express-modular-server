@@ -16,6 +16,7 @@ const {
   registerWorkerShutdownMessage,
   triggerGracefulShutdown,
 } = require("./layers/graceful.shutdown.layer");
+const replicate = require("./replica");
 
 if (clustering && cluster.isPrimary) {
   clusterInterceptor();
@@ -59,20 +60,19 @@ if (clustering && cluster.isPrimary) {
 
   errorMiddleware(app);
 
-  const server = app.listen(port, host, () => {
-    logByte.info(`Backend server (http://${host}:${port})`);
-  });
-
   const serverName = clustering ? "Express worker" : "Express";
+  const servers = replicate(app, host, port);
 
-  gracefulShutdown({
-    server,
-    name: serverName,
-    shutdownTimeout: SHUTDOWN_TIMEOUT,
-    activeRequests,
-    onShutdown: () => {
-      logByte.warn(`${serverName}: shutdown started`);
-    },
+  servers.forEach((server) => {
+    gracefulShutdown({
+      server,
+      name: serverName,
+      shutdownTimeout: SHUTDOWN_TIMEOUT,
+      activeRequests,
+      onShutdown: () => {
+        logByte.warn(`${serverName}: shutdown started`);
+      },
+    });
   });
 
   if (clustering)
