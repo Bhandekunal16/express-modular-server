@@ -2,6 +2,7 @@ const { express, cluster, logByte } = require("./provider/dependency.map");
 const {
   clusterInterceptor,
   markClusterShuttingDown,
+  replicate,
 } = require("./provider/interceptor.map");
 const {
   host,
@@ -9,7 +10,7 @@ const {
   SHUTDOWN_TIMEOUT,
   REPLICA,
   clustering,
-  replicas
+  replicas,
 } = require("./provider/config.map");
 const { middleware, errorMiddleware } = require("./middleware.loader");
 const {
@@ -18,7 +19,6 @@ const {
   registerWorkerShutdownMessage,
   triggerGracefulShutdown,
 } = require("./layers/graceful.shutdown.layer");
-const replicate = require("./replica");
 
 if (clustering && cluster.isPrimary) {
   clusterInterceptor();

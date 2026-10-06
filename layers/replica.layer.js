@@ -1,4 +1,4 @@
-const { logByte, http } = require("./provider/dependency.map");
+const { logByte, http } = require("../provider/dependency.map");
 
 module.exports = function replicate(app, host, port, replicate, replicas) {
   const ports = [];

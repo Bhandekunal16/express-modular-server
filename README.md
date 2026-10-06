@@ -1,616 +1,182 @@
 # Proxy Server
 
-A lightweight Node.js project that runs a small Express API and a reverse proxy. It is designed for local development and learning how request forwarding works without adding a heavy framework or extra dependencies.
+A CommonJS Node.js example consisting of an Express API, a Node.js HTTP reverse proxy, optional backend replicas, and optional Node cluster workers. Runtime behavior is controlled by JSON files in `json/`.
 
-## Overview
+## What runs
 
-This project contains two separate server entry points:
+- `index.js` starts the Express API. When `clustering` is enabled, its primary process forks one worker per CPU; workers start the HTTP listeners.
+- `proxy.js` starts the client-facing reverse proxy. It forwards requests to backend ports in round-robin order.
+- `layers/replica.layer.js` creates one backend listener, or `replicas` consecutive listeners, according to `REPLICA`.
 
-- `index.js` — runs the Express app (production entry) and creates three backend replicas
-- `proxy.js` — runs the HTTP reverse proxy
+With the committed configuration, the proxy listens on port `8000`; the backend replica ports are `4000`–`4003`. Because clustering is enabled, Node's cluster mechanism shares those worker listeners rather than assigning unique port ranges per worker.
 
-The app is configured with JSON files under the `json/` folder, which makes it easy to adjust the host and port values without changing code.
+## Request path
 
-## Project Structure
-
-```bash
-.
-├── index.js
-├── proxy.js
-├── app.process.sh         # start Express + proxy locally; SIGTERM both when either exits
-├── docker.process.sh      # build image from dockerFile and start docker compose
-├── docker-compose.yml     # compose definition for the containerized app
-├── dockerFile             # Docker image definition
-├── createProxyServer.js  # test-only proxy factory
-├── proxy/
-│   ├── proxy.request.tracker.js
-│   ├── proxy.timeout.handler.js
-│   ├── proxy.error.handler.js
-│   └── proxy.request.abort.handler.js
-├── middleware.loader.js
-├── jest.config.js
-├── test/
-│   ├── unit/
-│   ├── integration/
-│   ├── helpers/
-│   │   ├── createExpressApp.js
-│   │   └── createTestApp.js
-│   ├── fixtures/
-│   └── setup/
-├── provider/
-│   ├── dependency.map.js
-│   ├── config.map.js
-│   └── interceptor.map.js
-├── architecture.md
-├── package.json
-├── package-lock.json
-├── README.md
-├── json/
-│   ├── app.json
-│   ├── config.json
-│   ├── logger.config.json
-│   ├── helmet.config.json
-│   └── rate-limiting.config.json
-├── core/
-│   └── file.functions.js
-├── layers/
-│   ├── rate.limiting.layer.js
-│   ├── request.id.layer.js
-│   └── graceful.shutdown.layer.js
-├── interceptors/
-│   ├── cluster.interceptor.js
-│   ├── encryption.interceptor.js
-│   ├── error.interceptor.js
-│   ├── helmet.interceptor.js
-│   ├── logger.interceptor.js
-│   └── response.interceptor.js
-├── logs/
-├── .gitignore
-└── node_modules/
+```text
+Client → proxy :8000 → rate-limit check → backend :4000/:4001/:4002/:4003 → Express middleware → route
 ```
+
+The proxy selects the next configured backend port for every request. Direct requests to a backend port bypass proxy-only rate limiting and proxy timeout handling.
 
 ## Features
 
-- Express server with CORS enabled
-- JSON request parsing
-- Simple root endpoint (`GET /`)
-- 404 fallback response
-- Reverse proxy using Node.js `http` module
-- Optional error interceptor middleware
-- Optional encryption interceptor middleware
-- Optional request logging middleware
-- Optional response summary logging (status, duration in milliseconds, content length)
-- Optional Helmet-based security headers middleware
-- Optional per-request `X-Request-ID` on the Express API (propagate or generate UUID)
-- Optional per-IP rate limiting via a shared in-memory layer on the reverse proxy (JSON-tuned)
-- Optional proxy upstream timeouts (504 Gateway Timeout) and client connection timeouts
-- Graceful shutdown on `SIGTERM` / `SIGINT` for the proxy, Express workers, and cluster primary
-- Startup and HTTP graceful-shutdown messages through `log-byte` (`logByte` on `provider/dependency.map.js`)
-- Optional worker clustering through Node.js `cluster` module
-- Easy host/port configuration through JSON files
-
-## Configuration
-
-Settings live under `json/` on disk. At runtime,
-[`provider/config.map.js`](provider/config.map.js) loads and exports a single object:
-
-- spreads `json/config.json`, then `json/app.json`, then `json/rate-limiting.config.json`, then `json/logger.config.json` (later spreads override earlier keys on collision)
-- attaches `json/helmet.config.json` as the `helmet` property (not spread, so Helmet options do not mix with top-level flags)
-
-`index.js`, `proxy.js`, `middleware.loader.js`, and several interceptors/layers import from this module instead of requiring individual JSON files.
-
-### `json/app.json`
-
-```json
-{
-  "host": "0.0.0.0",
-  "port": 3000,
-  "proxyPort": 8000,
-  "PROXY_TIMEOUT": 30000,
-  "HEADERS_TIMEOUT": 10000,
-  "KEEP_ALIVE_TIMEOUT": 5000,
-  "SHUTDOWN_TIMEOUT": 10000
-}
-```
-
-The values are used as follows:
-
-- `host` — bind address for Express and the proxy listen socket (`server.listen`); `proxy.js` also uses this value as the upstream hostname. The test factory in `createProxyServer.js` rewrites `0.0.0.0` to `127.0.0.1` for that upstream hostname
-- `port` — base Express backend port; `index.js` creates three backend listeners on `port`, `port + 1`, and `port + 2`
-- `proxyPort` — reverse proxy **listen** port only (clients connect here); traffic is forwarded to the configured upstream target
-- `PROXY_TIMEOUT` — milliseconds used for upstream request/response socket timeouts when the matching flags in `json/config.json` are enabled
-- `HEADERS_TIMEOUT` — `server.headersTimeout` on the proxy when `ENABLE_CLIENT_HEADERS_TIMEOUT` is true
-- `KEEP_ALIVE_TIMEOUT` — `server.keepAliveTimeout` on the proxy when `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` is true
-- `SHUTDOWN_TIMEOUT` — graceful shutdown deadline (ms) for the proxy, Express workers, and cluster primary coordination (`layers/graceful.shutdown.layer.js`)
-
-The same file also holds encryption-related fields used by `interceptors/encryption.interceptor.js` (`secretKey`, `algorithm`, and related keys).
-
-### `json/config.json`
-
-```json
-{
-  "errorInterceptor": true,
-  "encryption_Interceptor": true,
-  "logger_interceptor": true,
-  "clustering": true,
-  "helmet_interceptor": true,
-  "rateLimiting": true,
-  "requestId": true,
-  "response_interceptor": true,
-  "ENABLE_UPSTREAM_REQUEST_TIMEOUT": true,
-  "ENABLE_UPSTREAM_RESPONSE_TIMEOUT": true,
-  "ENABLE_CLIENT_HEADERS_TIMEOUT": true,
-  "ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT": true
-}
-```
-
-- `errorInterceptor` — enables the custom error middleware from `interceptors/error.interceptor.js`
-- `encryption_Interceptor` — enables the custom encryption middleware from `interceptors/encryption.interceptor.js`
-- `logger_interceptor` — enables the request logger from `interceptors/logger.interceptor.js`
-- `helmet_interceptor` — enables Helmet security headers via `interceptors/helmet.interceptor.js`
-- `rateLimiting` — enables the shared rate limiter in `layers/rate.limiting.layer.js` on the reverse proxy (`proxy.js`) only; the Express app does not apply this limit
-- `requestId` — enables request ID middleware from `layers/request.id.layer.js` on the Express app only
-- `response_interceptor` — enables response summary logging from `interceptors/response.interceptor.js` on the Express app
-- `clustering` — enables the Node.js cluster process manager, which forks worker processes and lets only the worker bind the Express server port
-- `ENABLE_UPSTREAM_REQUEST_TIMEOUT` — when true, `proxy.js` (via `provider/config.map.js`) applies `PROXY_TIMEOUT` to the outbound upstream request; on timeout the proxy responds with **504** and destroys the upstream socket
-- `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` — when true, applies `PROXY_TIMEOUT` to the upstream response stream; on timeout responds with **504**
-- `ENABLE_CLIENT_HEADERS_TIMEOUT` — when true, sets `server.headersTimeout` to `HEADERS_TIMEOUT` on the proxy
-- `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` — when true, sets `server.keepAliveTimeout` to `KEEP_ALIVE_TIMEOUT` on the proxy
-
-### Middleware loading
-
-`middleware.loader.js` centralizes Express middleware setup. The exported
-`middleware(app)` function registers optional request ID handling first when
-`requestId` is enabled, then optional Helmet security headers when
-`helmet_interceptor` is enabled (via `helmetInterceptor(app)`), then always
-registers CORS and JSON request parsing, then registers the encryption and
-logger interceptors when their respective configuration flags are enabled, then
-the response logger when `response_interceptor` is enabled. Rate limiting is not
-part of the Express middleware stack; it runs at the proxy edge in `proxy.js`
-when `rateLimiting` is true. The exported
-`errorMiddleware(app)` function registers the error interceptor only when
-`errorInterceptor` is enabled.
-
-The loader gets Express and CORS from `provider/dependency.map.js`, feature flags
-from `provider/config.map.js`, and interceptor implementations from
-`provider/interceptor.map.js`. `index.js` calls `middleware(app)` during app
-setup and calls `errorMiddleware(app)` to register the configured error handler.
-
-## Request Logging
-
-The optional request logger is implemented in
-`interceptors/logger.interceptor.js` and is enabled when
-`logger_interceptor` is `true` in `json/config.json`. It logs request details
-including the HTTP method and URL, route parameters, query values, protocol and
-host, client IP information, request body, and headers. It then passes the
-request to the next middleware; it does not log responses.
-
-For correlation, logged entries include `requestId` resolved as
-`req.requestId`, then the incoming `x-request-id` header, then `"N/A"` if
-neither is present (for example when `requestId` is disabled in config but the
-client still sends a header).
-
-On the console, each entry is a single line prefixed with `request:` followed
-by `JSON.stringify` of the log object. Lines written under `logs/` are raw JSON
-without that prefix.
-
-## Response logging
-
-The optional response logger in `interceptors/response.interceptor.js` is enabled
-with `response_interceptor: true` in `json/config.json`. It records a summary
-when the response finishes (`res` `"finish"` event): the same `requestId`
-resolution as the request logger, HTTP method, `originalUrl`, `statusCode`,
-`durationMs` (numeric milliseconds via `performance` from `provider/dependency.map.js`),
-and `contentLength` from `res.getHeader("content-length")`. It runs after the
-request logger in `middleware.loader.js` and only on the Express API.
-
-When `WRITE_L0G` is true (from `provider/config.map.js`, defined in
-`json/logger.config.json`), each response summary is also appended as a JSON line
-under `logs/`, using the same file helper as the request logger. The `exclude` array applies only to request logs, not these
-response summaries.
-
-On the console, each summary is prefixed with `response:` followed by
-`JSON.stringify` of the summary object (file lines remain raw JSON).
-
-## Helmet Security Headers
-
-The project also supports a Helmet-based security interceptor. It is enabled via
-`json/config.json` with `helmet_interceptor: true` and is implemented in
-`interceptors/helmet.interceptor.js`.
-
-When `helmet_interceptor` is enabled, `interceptors/helmet.interceptor.js` reads
-the `helmet` object from `provider/config.map.js` (sourced from
-`json/helmet.config.json`). If that object has no keys, Helmet defaults apply;
-otherwise options such as `contentSecurityPolicy` and `crossOriginResourcePolicy`
-are passed through to Helmet.
-
-Example `json/helmet.config.json`:
-
-```json
-{
-  "contentSecurityPolicy": false,
-  "crossOriginResourcePolicy": {
-    "policy": "cross-origin"
-  }
-}
-```
-
-## Request ID
-
-Optional request correlation is controlled by `requestId` in `json/config.json`.
-The middleware lives in `layers/request.id.layer.js` and is registered through
-`provider/interceptor.map.js` as `requestIdInterceptor`.
-
-When enabled:
-
-- If the client sends `X-Request-ID`, that value is reused.
-- Otherwise a new ID is generated with `crypto.randomUUID()`.
-- The ID is stored on `req.requestId` and echoed on the response as `X-Request-ID`.
-
-This runs on the **Express API** only (`middleware.loader.js`). The reverse
-proxy does not run this layer; it forwards incoming headers as-is, so a client
-`X-Request-ID` can still reach the backend when traffic goes through `proxy.js`.
-
-## Rate limiting
-
-Optional per-IP rate limiting is controlled by `rateLimiting` in
-`json/config.json` (via `provider/config.map.js`). The logic lives in
-`layers/rate.limiting.layer.js`: an in-memory counter per client IP
-(`req.socket.remoteAddress`) using `windowMs` and `limit` from the same config map
-(sourced from `json/rate-limiting.config.json`).
-
-```json
-{
-  "windowMs": 900000,
-  "limit": 100,
-  "standardHeaders": true,
-  "legacyHeaders": false
-}
-```
-
-- `windowMs` — length of the rate-limit window in milliseconds (900000 = 15 minutes); **used by the layer**
-- `limit` — maximum requests allowed per client IP within each window; **used by the layer**
-- `standardHeaders` and `legacyHeaders` — reserved in JSON for forward compatibility; the current layer always sets `RateLimit-Limit` and `RateLimit-Remaining` and does not read these flags
-
-When a client exceeds `limit` within `windowMs`, the layer ends the response with HTTP **429 Too Many Requests**, a `Retry-After` header (seconds until the window resets), and a JSON body:
-
-```json
-{
-  "status": false,
-  "statusCode": 429,
-  "message": "Too Many Requests"
-}
-```
-
-Rate limiting is an **edge / proxy** concern: `proxy.js` calls the layer before forwarding. If the layer returns `false`, the proxy responds with 429 and does not contact the backend. Traffic that reaches the Express app directly on `port` (bypassing the proxy) is not limited by this flag.
-
-The proxy process keeps in-memory counters per client IP; limits are not shared across multiple proxy instances or with Express worker processes.
-
-### File logging and excluded fields
-
-`json/logger.config.json` defines `exclude` and `WRITE_L0G`; interceptors read
-those fields from `provider/config.map.js`. That file controls file output for
-both the request logger and the response logger, and which request properties are
-omitted from the **request** logged object:
-
-```json
-{
-  "exclude": ["params", "body"],
-  "WRITE_L0G": true
-}
-```
-
-`WRITE_L0G` (with a zero in `L0G`) enables appending each request log and each
-response summary as a JSON line to a date-named text file under `logs/` (for
-example, `logs/2026-09-29.txt`). The `logs/` directory is created automatically.
-Set `WRITE_L0G` to `false` to disable file output; details are still sent to
-the console.
-
-Entries in `exclude` are request property names, such as `body`, `headers`,
-`params`, or `query`. Excluded properties are removed before the request is
-written to either the console or the log file. Choose exclusions carefully:
-request bodies and headers may contain credentials, tokens, or other sensitive
-data. The logger runs after JSON parsing and optional decryption, so an
-unencrypted or successfully decrypted body can be logged unless excluded.
-
-For real user data, disable the logger with `logger_interceptor` or exclude
-sensitive properties in `json/logger.config.json`.
+- `GET /` returns the API's hello-world payload; unmatched routes return JSON 404.
+- Optional request IDs, Helmet headers, CORS, JSON parsing, encryption, request logging, response logging, and error middleware.
+- Per-IP, in-memory proxy rate limiting.
+- Upstream request/response timeouts (504), upstream errors (502), and client-abort handling.
+- Graceful `SIGTERM`/`SIGINT` shutdown for HTTP servers and cluster coordination.
+- Local JSON-line logging under `logs/` when enabled.
 
 ## Installation
 
-Install dependencies:
+Requires Node.js and npm. The Docker image uses Node.js 22.
 
 ```bash
 npm install
 ```
 
-## Run the Application
+## Run locally
 
-### Start the Express app
+Start the backend and proxy in separate terminals:
 
 ```bash
 node index.js
-```
-
-The Express entry point creates three backend listeners using the configured `port` as the base port. With the default configuration, the servers are:
-
-```text
-http://0.0.0.0:3000
-http://0.0.0.0:3001
-http://0.0.0.0:3002
-```
-
-The replica ports are calculated as:
-
-```text
-node 1 = port
-node 2 = port + 1
-node 3 = port + 2
-```
-
-Open any backend directly, for example:
-
-```bash
-http://localhost:3000/
-```
-
-Expected response:
-
-```json
-{ "message": "hello world" }
-```
-
-### Backend replicas and proxy
-
-`index.js` starts three HTTP servers from the same Express application instance. Each server has its own listening socket, while routes and middleware are shared by the application instance. The replica helper returns the three server objects so each listener can be registered with graceful shutdown.
-
-The current `proxy.js` configuration still has a single `TARGET_PORT` value. Creating three backend listeners does **not** by itself make the proxy round-robin between them. Round-robin behavior requires the proxy target-selection logic to explicitly select among `port`, `port + 1`, and `port + 2`.
-
-### Start the proxy server
-
-```bash
 node proxy.js
 ```
 
-This server listens on:
-
-```bash
-http://0.0.0.0:8000
-```
-
-On listen, the proxy logs `Proxy server (http://...)` with `logByte.info`. The Express app logs `Backend server (http://...)` the same way.
-
-Requests sent to the proxy port are forwarded to the backend `host` and `port`
-from `provider/config.map.js` (values defined in `json/app.json`).
-
-### Start both processes locally
+Or start both through the supplied process script:
 
 ```bash
 bash app.process.sh
 ```
 
-The script backgrounds `node index.js` and `node proxy.js`, keeps both PIDs, and waits until either process exits. It then sends `SIGTERM` to both so the remaining process runs graceful shutdown.
+`app.process.sh` starts both processes in the background, waits until either exits, then sends `SIGTERM` to both PIDs.
 
-### Start the Docker workflow
+Send traffic through the proxy:
 
 ```bash
-bash docker.process.sh <image-name> <image-tag>
+curl http://localhost:8000/
 ```
 
-Example:
+With `encryption_Interceptor: true` (the committed default), the JSON response is wrapped and encrypted:
+
+```json
+{ "data": "<base64 ciphertext>" }
+```
+
+To receive the plain route payload during local experimentation, set `encryption_Interceptor` to `false` in `json/config.json` and restart the backend. The unwrapped route payload is:
+
+```json
+{ "message": "hello world" }
+```
+
+## Routes and proxy responses
+
+| Path / condition | Result |
+|---|---|
+| `GET /` | 200 from the Express route (encrypted when encryption middleware is enabled) |
+| Any unmatched Express route | JSON 404: `status: false`, `statusCode: 404`, `message: "Not Found"` |
+| Proxy upstream error | 502 `Bad Gateway` |
+| Enabled upstream timeout | 504 `Gateway Timeout` |
+| Request while the proxy drains | 503 `Service Unavailable` |
+| Rate limit exceeded | JSON 429 with `Retry-After` |
+
+The proxy preserves the method, URL path, and request headers when it creates the upstream request. It does not expose a separate application API beyond forwarding traffic.
+
+## Configuration
+
+`provider/config.map.js` exports one object assembled from:
+
+1. `json/config.json`
+2. `json/app.json`
+3. `json/rate-limiting.config.json`
+4. `json/logger.config.json`
+
+The Helmet file is attached separately as `helmet`: `json/helmet.config.json`. Later spreads override earlier duplicate keys.
+
+### Current runtime values
+
+`json/app.json` currently defines:
+
+| Setting | Current value | Used for |
+|---|---:|---|
+| `host` | `0.0.0.0` | Bind address and proxy upstream hostname |
+| `port` | `4000` | First backend port |
+| `proxyPort` | `8000` | Proxy listener |
+| `replicas` | `4` | Number of backend ports when `REPLICA` is true |
+| `PROXY_TIMEOUT` | `30000` ms | Enabled upstream request/response timeouts |
+| `HEADERS_TIMEOUT` | `10000` ms | Enabled proxy `headersTimeout` |
+| `KEEP_ALIVE_TIMEOUT` | `5000` ms | Enabled proxy `keepAliveTimeout` |
+| `SHUTDOWN_TIMEOUT` | `10000` ms | Graceful-shutdown deadline |
+
+`json/config.json` contains feature switches:
+
+| Flag | Scope |
+|---|---|
+| `clustering` | Forks API workers from the cluster primary |
+| `REPLICA` | Creates `replicas` listeners starting at `port`; otherwise creates only `port` |
+| `rateLimiting` | Enables the proxy-edge rate limiter |
+| `requestId`, `helmet_interceptor`, `encryption_Interceptor`, `logger_interceptor`, `response_interceptor`, `errorInterceptor` | Express middleware |
+| `ENABLE_UPSTREAM_REQUEST_TIMEOUT`, `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` | Proxy upstream timeouts |
+| `ENABLE_CLIENT_HEADERS_TIMEOUT`, `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` | Proxy server timeouts |
+
+`json/rate-limiting.config.json` currently permits 100 requests per IP per 900,000 ms (15 minutes). The layer emits `RateLimit-Limit` and `RateLimit-Remaining`; it does not read the stored `standardHeaders` or `legacyHeaders` values.
+
+`json/logger.config.json` controls request-field exclusions and `WRITE_L0G` (spelled with a zero), which enables appending request and response records to `logs/YYYY-MM-DD.txt`.
+
+## Middleware order
+
+For an API worker, `middleware.loader.js` applies enabled middleware in this order:
+
+```text
+request ID → Helmet → CORS → express.json() → encryption → request logger → response logger
+```
+
+Routes follow that stack, then the 404 handler, then the optional Express error middleware. Request IDs are reused from `X-Request-ID` or generated with `crypto.randomUUID()` and returned as `X-Request-ID`. The proxy forwards any incoming request-ID header but does not generate one.
+
+The encryption interceptor only decrypts JSON request bodies containing `data`. It replaces `res.json()` so every JSON route response is encrypted. It is a demonstration layer, not a replacement for HTTPS/TLS.
+
+## Logging and shutdown
+
+Request and response summaries are written to the console. With `WRITE_L0G: true`, they are also appended as JSON lines under `logs/`; request exclusions apply only to request logs. The backend/proxy startup and HTTP shutdown messages use `log-byte`.
+
+On `SIGTERM` or `SIGINT`, a standalone API process or proxy stops accepting connections, waits for tracked work, then exits `0`; remaining tracked sockets are destroyed and the process exits `1` after `SHUTDOWN_TIMEOUT`. A cluster primary signals its workers and suppresses worker replacement during this coordinated shutdown.
+
+## Docker
+
+The repository includes `dockerFile`, `docker-compose.yml`, and `docker.process.sh`. The script builds with `dockerFile` and passes an image name/tag to Compose:
 
 ```bash
 bash docker.process.sh proxy-server 1.0.0
 ```
 
-The script builds the image from `dockerFile`, tags it as `<image-name>:<image-tag>`, and starts the Compose stack defined in `docker-compose.yml`. This is useful when you want to run the project inside the containerized setup instead of the local Node.js process manager.
+The Compose file currently names its build file `dockerfile` (lowercase), while the tracked file is `dockerFile`. On case-sensitive filesystems, align that filename before relying on the Compose workflow. It publishes 8000 and backend ports 4000–4003 and mounts `./logs` at `/app/logs`.
 
-## How the Proxy Works
-
-[`proxy.js`](proxy.js) is the production entry point: it loads `provider/config.map.js`,
-creates the HTTP server, wires `proxy/` helpers, listens on `proxyPort`, applies
-client `headersTimeout` / `keepAliveTimeout`, and registers graceful shutdown.
-
-[`createProxyServer.js`](createProxyServer.js) mirrors the proxy request handler for
-automated tests only (integration tests bind ephemeral ports without starting `proxy.js`).
-
-Integration tests build the app via [`test/helpers/createExpressApp.js`](test/helpers/createExpressApp.js)
-and [`test/helpers/createTestApp.js`](test/helpers/createTestApp.js) (quieter middleware flags)
-without starting [`index.js`](index.js).
-
-1. Optional rate limiting (`layers/rate.limiting.layer.js`) on the **proxy listen port**; over-limit clients get **429** without forwarding. Limits are per client IP in the proxy process (restart the proxy to reset counters). Direct requests to Express on `port` are not rate-limited by this flag.
-2. Forwards to **`port`** (API), not `proxyPort`, via `http.request` with the same method, path, and headers.
-3. Each upstream `proxyReq` is tracked in a `Set` via [`proxy/proxy.request.tracker.js`](proxy/proxy.request.tracker.js) for graceful shutdown (`activeRequests`).
-4. Upstream **504** handling when enabled: [`proxy/proxy.timeout.handler.js`](proxy/proxy.timeout.handler.js) (`updateRequestTimeout` / `updateResponseTimeout`).
-5. Upstream connection errors → **502** via [`proxy/proxy.error.handler.js`](proxy/proxy.error.handler.js) (`sendBadGateway`).
-6. Client abort/error handling: [`proxy/proxy.request.abort.handler.js`](proxy/proxy.request.abort.handler.js) destroys the upstream request when the client disconnects.
-7. Streams the upstream response back to the client.
-
-**Errors and timeouts**
-
-| Condition | HTTP status | Body (typical) |
-|-----------|-------------|----------------|
-| Upstream connection error | 502 | `Bad Gateway` |
-| Upstream request/response exceeds `PROXY_TIMEOUT` (when enabled) | 504 | `Gateway Timeout` |
-| Client aborts, errors, or early `close` (`proxy.request.abort.handler`) | — | upstream `proxyReq` destroyed; no forced client response |
-| Request received during graceful shutdown | 503 | `Service Unavailable` |
-| Per-IP limit exceeded (`rateLimiting: true`) | 429 | JSON `Too Many Requests` (+ `Retry-After`) |
-
-Optional `server.headersTimeout` and `server.keepAliveTimeout` apply to the client-facing proxy server when the `ENABLE_CLIENT_*` flags are true.
-
-## Proxy timeouts
-
-Timeout durations come from `json/app.json`; toggles are in `json/config.json`:
-
-- **Upstream request** — `ENABLE_UPSTREAM_REQUEST_TIMEOUT` + `PROXY_TIMEOUT`
-- **Upstream response** — `ENABLE_UPSTREAM_RESPONSE_TIMEOUT` + `PROXY_TIMEOUT`
-- **Client headers** — `ENABLE_CLIENT_HEADERS_TIMEOUT` + `HEADERS_TIMEOUT`
-- **Client keep-alive** — `ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT` + `KEEP_ALIVE_TIMEOUT`
-
-Set any `ENABLE_*` flag to `false` to disable that behavior without changing millisecond values in `app.json`.
-
-## Graceful shutdown
-
-Both `proxy.js` and `index.js` handle `SIGTERM` / `SIGINT` through [`layers/graceful.shutdown.layer.js`](layers/graceful.shutdown.layer.js).
-
-**Proxy:** stops accepting connections (`server.close()`), responds with **503** to new requests while draining, tracks active upstream `proxyReq` sockets, waits up to `SHUTDOWN_TIMEOUT`, then destroys remaining upstream requests and exits `1` on timeout or `0` when idle.
-
-**Express (no cluster):** tracks in-flight responses, `server.close()`, waits for active requests, same timeout/exit behavior.
-
-**Cluster primary:** does not listen for HTTP; on signal it sets `markClusterShuttingDown()` (no worker respawn), sends `shutdown` to each worker, waits for exits or forces `worker.kill()` after `SHUTDOWN_TIMEOUT`.
-
-**Cluster workers:** same HTTP graceful shutdown as standalone Express; also start shutdown when the primary sends a `shutdown` IPC message.
-
-Repeated signals during shutdown are ignored (idempotent).
-
-HTTP shutdown (proxy and Express) logs through `logByte`:
-
-| Level | Message |
-|-------|---------|
-| `error` | `{signal} received. Starting graceful shutdown...` |
-| `error` | `{name}: stopping new requests` |
-| `warn` | `Express: shutdown started` or `Express worker: shutdown started` (`index.js` `onShutdown`) |
-| `debug` | `{name}: waiting for active requests` |
-| `error` | `{name}: destroying {count} active requests` |
-| `error` | `{name}: shutdown timeout` / `server.close error` / `shutdown complete` |
-
-The cluster primary still uses `console.log`: `Cluster primary: shutting down workers`, `Cluster primary: shutdown timeout`, and `Cluster primary: shutdown complete`.
-
-To test locally, start `node proxy.js` or `node index.js` and run `kill -SIGTERM <pid>` (or press Ctrl+C for `SIGINT`). `bash app.process.sh` signals both processes together. Started separately, the proxy and Express processes each need their own signal.
-
-## Error Handling
-
-The project includes an error interceptor at:
+## Tests
 
 ```bash
-interceptors/error.interceptor.js
+npm test
+npm run test:unit
+npm run test:integration
+npm run test:coverage
 ```
 
-It is activated when `json/config.json` includes:
+Tests are organized under `test/unit` and `test/integration`, with factories under `test/helpers`. The current source refactor moved the cluster and replica modules into `layers/`; some tracked test imports still reference the removed root-level `createProxyServer` helper and old `interceptors/cluster.interceptor.js` path. Update those tests before treating the full test command as a passing verification of this revision.
 
-```json
-{
-  "errorInterceptor": true
-}
+## Project map
+
+```text
+index.js / proxy.js        Runtime entry points
+layers/                    Cluster, replica, request-ID, rate-limit, shutdown behavior
+interceptors/              Express middleware implementations
+proxy/                     Upstream errors, timeouts, tracking, client-abort handling
+provider/                  Shared dependency, configuration, and module maps
+json/                      Runtime configuration
+test/                      Jest unit and integration tests
 ```
 
-## Clustering
-
-The app can run with Node.js process clustering enabled via `json/config.json`:
-
-```json
-{
-  "clustering": true
-}
-```
-
-When clustering is enabled:
-
-- the primary process acts as a supervisor
-- it forks worker processes based on the available CPU count
-- a worker restarts itself if it exits unexpectedly (unless intentional shutdown is in progress via `markClusterShuttingDown()`)
-- the worker process starts the Express application and its three replicated listeners (`port`, `port + 1`, `port + 2`)
-- the primary coordinates graceful shutdown and does not serve HTTP (see **Graceful shutdown**)
-
-This pattern improves concurrency and can help distribute work across CPU cores for local performance testing.
-
-## Encryption and Security Status
-
-This project includes an optional encryption interceptor, which can be enabled through the config file.
-
-### Config option
-
-```json
-{
-  "errorInterceptor": true,
-  "encryption_Interceptor": true,
-  "logger_interceptor": true,
-  "clustering": true,
-  "helmet_interceptor": true,
-  "rateLimiting": true,
-  "requestId": true,
-  "response_interceptor": true,
-  "ENABLE_UPSTREAM_REQUEST_TIMEOUT": true,
-  "ENABLE_UPSTREAM_RESPONSE_TIMEOUT": true,
-  "ENABLE_CLIENT_HEADERS_TIMEOUT": true,
-  "ENABLE_CLIENT_KEEP_ALIVE_TIMEOUT": true
-}
-```
-
-When `encryption_Interceptor` is set to `true`, the Express app loads the middleware from:
-
-```bash
-interceptors/encryption.interceptor.js
-```
-
-This middleware tries to decrypt incoming JSON payloads that contain a `data` field and re-encrypts outgoing JSON responses before sending them back to the client.
-
-### Important note
-
-This is a lightweight custom encryption layer for demonstration purposes, not a full TLS/HTTPS implementation. The project still uses plain HTTP in the main server and proxy setup, so it is not a secure production-ready encrypted transport by itself.
-
-This project is intentionally simple and is suitable for:
-
-- local API testing
-- proxy experiments
-- understanding request forwarding
-- learning Node.js server basics
-
-It is not designed for production use without additional hardening, such as:
-
-- HTTPS/TLS encryption
-- authentication
-- request validation
-- production-safe logging and monitoring
-- environment variables
-- proper error handling for real deployments
-
-Optional rate limiting is enabled by default in `json/config.json` for learning
-on the reverse proxy only. Counters are in-memory in the proxy process;
-production deployments may need stricter limits, a shared store (for example
-Redis), or rate limiting at an external gateway.
-
-## Testing
-
-Automated tests use **Jest** and **Supertest**. Jest fits this CommonJS codebase because it supports module mocking (`config.map`, interceptors), timer control (rate-limit windows, graceful shutdown), and coverage without a separate build step.
-
-### Commands
-
-```bash
-npm test                 # full suite (run in band for stable ports/timers)
-npm run test:unit        # unit tests only
-npm run test:integration # integration tests only
-npm run test:coverage    # coverage report (text + lcov under coverage/)
-```
-
-### Layout
-
-- `test/unit/` — provider, layers, interceptors, `middleware.loader.js`, `core/file.functions.js`
-- `test/integration/` — Express routes, proxy ↔ upstream, middleware stack, proxy-to-API e2e
-- `test/helpers/` — `createExpressApp.js` (Express bootstrap for tests), `createTestApp.js`, mocks, upstream server
-- `test/fixtures/` — encryption helpers and config fragments
-
-Integration tests use ephemeral ports, temporary log directories, and mocked `process.exit` so graceful shutdown does not terminate the runner. They do not write to the project `logs/` folder.
-
-### Coverage focus
-
-Coverage prioritizes `provider/`, `layers/`, `interceptors/`, `core/`, `proxy/`, `middleware.loader.js`, `index.js`, and `createProxyServer.js`. Production `proxy.js` is exercised manually; Express integration tests use `test/helpers/createExpressApp.js`.
-
-### Known limitations
-
-- Clustering is covered with mocked `cluster`/`os`, not full multi-worker E2E.
-- Demo encryption is behavior-tested, not audited for production crypto.
-- Error interceptor JSON always includes `statusCode: 500` even when HTTP status differs.
-- Real OS signal delivery is not asserted; shutdown uses `triggerGracefulShutdown` and mocks.
+See [architecture.md](architecture.md) for the component-level design.
 
 ## License
 
-The project is currently configured with the ISC license in `package.json`.
-
-## Suggested Improvements
-
-- add `.env` support for configuration
-- redact sensitive data and use a configurable logging framework
-- add health check endpoints
-- add proxy retries and richer timeout metrics
-- add production-ready security hardening
+ISC, as declared in `package.json`.
