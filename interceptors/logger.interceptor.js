@@ -1,8 +1,4 @@
-const {
-  WRITE_L0G,
-  LOG_REQUESTS,
-  exclude,
-} = require("../provider/config.map");
+const { WRITE_L0G, LOG_REQUESTS, exclude } = require("../provider/config.map");
 
 const append = require("../core/file.functions");
 
@@ -21,17 +17,11 @@ module.exports = function logger(req, _res, next) {
     ip: req.ip,
   };
 
-  if (req.params && Object.keys(req.params).length > 0) {
+  if (req.params && Object.keys(req.params).length > 0)
     request.params = req.params;
-  }
 
-  if (req.query && Object.keys(req.query).length > 0) {
-    request.query = req.query;
-  }
-
-  if (req.body && Object.keys(req.body).length > 0) {
-    request.body = req.body;
-  }
+  if (req.query && Object.keys(req.query).length > 0) request.query = req.query;
+  if (req.body && Object.keys(req.body).length > 0) request.body = req.body;
 
   if (hasExclusions) {
     for (const property of exclude) {
@@ -41,13 +31,8 @@ module.exports = function logger(req, _res, next) {
 
   const output = JSON.stringify(request);
 
-  if (WRITE_L0G) {
-    append(output);
-  }
-
-  if (LOG_REQUESTS) {
-    console.log(`request: ${output}`);
-  }
+  if (WRITE_L0G) append(output);
+  if (LOG_REQUESTS) console.log(`request: ${output}`);
 
   next();
 };
