@@ -24,7 +24,6 @@ class Encryption {
 
   encrypt(value) {
     const iv = randomBytes(IV_LENGTH);
-
     const cipher = createCipheriv(encryption_algorithm, this.#KEY, iv);
 
     const encrypted = Buffer.concat([
@@ -39,13 +38,9 @@ class Encryption {
 
   decrypt(value) {
     const buffer = Buffer.from(value, ENCODED_KEY);
-
     const iv = buffer.subarray(0, IV_LENGTH);
-
     const authTag = buffer.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
-
     const encrypted = buffer.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
-
     const decipher = createDecipheriv(encryption_algorithm, this.#KEY, iv);
 
     decipher.setAuthTag(authTag);
