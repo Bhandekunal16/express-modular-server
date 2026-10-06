@@ -1,27 +1,33 @@
 const { cluster, logByte } = require("../provider/dependency.map");
 
-let shutdownStarted = false;
-let shutdownConfig = null;
+let [shutdownStarted, shutdownConfig, clusterShutdownStarted] = [
+  false,
+  null,
+  false,
+];
+
+const NOOP = () => {};
 
 function isShuttingDown() {
   return shutdownStarted;
 }
 
-function waitForActiveRequests(activeRequests, name, checkIntervalMs = 100) {
+function waitForActiveRequests(activeRequests, name) {
+  if (!activeRequests || activeRequests.size === 0) return Promise.resolve();
+
+  logByte.debug(`${name}: waiting for active requests`);
+
   return new Promise((resolve) => {
-    if (!activeRequests || activeRequests.size === 0) {
-      resolve();
-      return;
-    }
-
-    logByte.debug(`${name}: waiting for active requests`);
-
-    const interval = setInterval(() => {
-      if (!activeRequests || activeRequests.size === 0) {
-        clearInterval(interval);
+    const check = () => {
+      if (activeRequests.size === 0) {
         resolve();
+        return;
       }
-    }, checkIntervalMs);
+
+      setImmediate(check);
+    };
+
+    check();
   });
 }
 
@@ -29,21 +35,18 @@ function destroyActiveRequests(activeRequests, name) {
   if (!activeRequests || activeRequests.size === 0) return;
 
   const count = activeRequests.size;
+
   logByte.error(`${name}: destroying ${count} active requests`);
 
   for (const item of activeRequests) {
     try {
-      if (item && item.socket && !item.socket.destroyed) {
+      if (item?.socket && !item.socket.destroyed) {
         item.socket.destroy();
-      } else if (
-        item &&
-        typeof item.destroy === "function" &&
-        !item.destroyed
-      ) {
+      } else if (typeof item?.destroy === "function" && !item.destroyed) {
         item.destroy();
       }
     } catch (_) {
-      // already destroyed or closed
+      // !ignore
     }
   }
 
@@ -51,23 +54,32 @@ function destroyActiveRequests(activeRequests, name) {
 }
 
 function runGracefulShutdown(signal) {
-  if (!shutdownConfig || shutdownStarted) return;
+  if (shutdownStarted || !shutdownConfig) return;
 
   shutdownStarted = true;
 
-  const { server, name, shutdownTimeout, activeRequests, onShutdown } =
-    shutdownConfig;
+  const {
+    server,
+    name,
+    shutdownTimeout,
+    activeRequests,
+    onShutdown = NOOP,
+  } = shutdownConfig;
 
   logByte.error(`${signal} received. Starting graceful shutdown...`);
   logByte.error(`${name}: stopping new requests`);
 
-  if (typeof onShutdown === "function") onShutdown();
+  onShutdown();
 
   const forceTimer = setTimeout(() => {
     logByte.error(`${name}: shutdown timeout`);
+
     destroyActiveRequests(activeRequests, name);
+
     process.exit(1);
   }, shutdownTimeout);
+
+  forceTimer.unref?.();
 
   server.close((err) => {
     if (err) logByte.error(`${name}: server.close error:`, err.message);
@@ -91,14 +103,14 @@ function triggerGracefulShutdown(signal) {
   runGracefulShutdown(signal);
 }
 
-let clusterShutdownStarted = false;
-
 function registerClusterPrimaryShutdown({
   shutdownTimeout,
   markClusterShuttingDown,
 }) {
   const runClusterShutdown = (signal) => {
-    if (clusterShutdownStarted) return;
+    if (clusterShutdownStarted) {
+      return;
+    }
 
     clusterShutdownStarted = true;
     shutdownStarted = true;
@@ -106,33 +118,11 @@ function registerClusterPrimaryShutdown({
     console.log(`${signal} received. Starting graceful shutdown...`);
     console.log("Cluster primary: shutting down workers");
 
-    if (typeof markClusterShuttingDown === "function")
-      markClusterShuttingDown();
+    markClusterShuttingDown?.();
 
     const workers = Object.values(cluster.workers);
 
-    for (const worker of workers) {
-      try {
-        worker.send("shutdown");
-      } catch (_) {
-        // worker may already be gone
-      }
-    }
-
-    const forceTimer = setTimeout(() => {
-      console.log("Cluster primary: shutdown timeout");
-      for (const worker of Object.values(cluster.workers)) {
-        try {
-          worker.kill();
-        } catch (_) {
-          // ignore
-        }
-      }
-      process.exit(1);
-    }, shutdownTimeout);
-
     if (workers.length === 0) {
-      clearTimeout(forceTimer);
       console.log("Cluster primary: shutdown complete");
       process.exit(0);
       return;
@@ -141,16 +131,47 @@ function registerClusterPrimaryShutdown({
     let remaining = workers.length;
 
     const onWorkerExit = () => {
-      remaining -= 1;
-      if (remaining <= 0) {
-        cluster.removeListener("exit", onWorkerExit);
-        clearTimeout(forceTimer);
-        console.log("Cluster primary: shutdown complete");
-        process.exit(0);
+      remaining--;
+
+      if (remaining !== 0) {
+        return;
       }
+
+      cluster.removeListener("exit", onWorkerExit);
+      clearTimeout(forceTimer);
+
+      console.log("Cluster primary: shutdown complete");
+
+      process.exit(0);
     };
 
     cluster.on("exit", onWorkerExit);
+
+    for (const worker of workers) {
+      try {
+        worker.send("shutdown");
+      } catch (_) {
+        // !ignore
+      }
+    }
+
+    const forceTimer = setTimeout(() => {
+      cluster.removeListener("exit", onWorkerExit);
+
+      console.log("Cluster primary: shutdown timeout");
+
+      for (const worker of Object.values(cluster.workers)) {
+        try {
+          worker.kill();
+        } catch (_) {
+          // !ignore
+        }
+      }
+
+      process.exit(1);
+    }, shutdownTimeout);
+
+    forceTimer.unref?.();
   };
 
   process.once("SIGTERM", () => runClusterShutdown("SIGTERM"));
@@ -159,17 +180,13 @@ function registerClusterPrimaryShutdown({
 
 function registerWorkerShutdownMessage(onShutdownMessage) {
   if (!cluster.isWorker) return;
-
   process.on("message", (message) => {
-    if (message === "shutdown") {
-      onShutdownMessage();
-    }
+    if (message === "shutdown") onShutdownMessage();
   });
 }
 
 function resetShutdownStateForTests() {
   if (process.env.NODE_ENV !== "test") return;
-
   shutdownStarted = false;
   shutdownConfig = null;
   clusterShutdownStarted = false;
