@@ -1,19 +1,30 @@
 const { fs, path } = require("../provider/dependency.map");
 
-module.exports = function append(log) {
-  try {
-    const logDir = path.join(process.cwd(), "logs");
+const LOG_DIR = path.join(process.cwd(), "logs");
 
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
+fs.mkdirSync(LOG_DIR, { recursive: true });
+
+let currentDate = "";
+let stream = null;
+
+function getLogStream() {
+  const date = new Date().toISOString().slice(0, 10);
+
+  if (date !== currentDate) {
+    if (stream) {
+      stream.end();
     }
 
-    const date = new Date().toISOString().slice(0, 10);
+    currentDate = date;
 
-    const filePath = path.join(logDir, `${date}.txt`);
-
-    fs.appendFileSync(filePath, `${log}\n`);
-  } catch (e) {
-    throw new Error(e.message);
+    stream = fs.createWriteStream(path.join(LOG_DIR, `${date}.txt`), {
+      flags: "a",
+    });
   }
+
+  return stream;
+}
+
+module.exports = function append(log) {
+  getLogStream().write(`${log}\n`);
 };
