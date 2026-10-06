@@ -1,5 +1,11 @@
 const { performance } = require("node:perf_hooks");
-const { randomUUID } = require("crypto");
+const {
+  randomUUID,
+  createHash,
+  randomBytes,
+  createCipheriv,
+  createDecipheriv
+} = require("crypto");
 
 module.exports = {
   express: require("express"),
@@ -13,5 +19,9 @@ module.exports = {
   rateLimit: require("express-rate-limit"),
   logByte: require("log-byte"),
   randomUUID,
+  createHash,
+  randomBytes,
+  createCipheriv,
+  createDecipheriv,
   performance,
 };

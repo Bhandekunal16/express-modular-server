@@ -1,64 +1,75 @@
-const crypto = require("crypto");
+const {
+  createHash,
+  randomBytes,
+  createCipheriv,
+  createDecipheriv,
+} = require("../provider/dependency.map");
+
 const {
   secretKey,
   algorithm,
-  randomString,
-  ENCODED_KEY,
   encryption_algorithm,
   Unicode_Transformation_Format,
+  IV_LENGTH,
+  AUTH_TAG_LENGTH,
+  ENCODED_KEY,
 } = require("../provider/config.map");
 
-class encryption {
+class Encryption {
   #KEY;
-  #IV;
 
   constructor() {
-    this.#KEY = crypto.createHash(algorithm).update(secretKey).digest();
-    this.#IV = Buffer.from(randomString);
+    this.#KEY = createHash(algorithm).update(secretKey).digest();
   }
 
-  encrypt(t) {
-    const cipher = crypto.createCipheriv(
-      encryption_algorithm,
-      this.#KEY,
-      this.#IV,
-    );
-    let encrypted = cipher.update(
-      t,
-      Unicode_Transformation_Format,
+  encrypt(value) {
+    const iv = randomBytes(IV_LENGTH);
+
+    const cipher = createCipheriv(encryption_algorithm, this.#KEY, iv);
+
+    const encrypted = Buffer.concat([
+      cipher.update(value, Unicode_Transformation_Format),
+      cipher.final(),
+    ]);
+
+    return Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString(
       ENCODED_KEY,
     );
-    encrypted += cipher.final(ENCODED_KEY);
-    return encrypted;
   }
 
-  decrypt(i) {
-    const decipher = crypto.createDecipheriv(
-      encryption_algorithm,
-      this.#KEY,
-      this.#IV,
-    );
-    let decrypted = decipher.update(
-      i,
-      ENCODED_KEY,
-      Unicode_Transformation_Format,
-    );
-    decrypted += decipher.final(Unicode_Transformation_Format);
-    return decrypted;
+  decrypt(value) {
+    const buffer = Buffer.from(value, ENCODED_KEY);
+
+    const iv = buffer.subarray(0, IV_LENGTH);
+
+    const authTag = buffer.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
+
+    const encrypted = buffer.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
+
+    const decipher = createDecipheriv(encryption_algorithm, this.#KEY, iv);
+
+    decipher.setAuthTag(authTag);
+
+    return Buffer.concat([
+      decipher.update(encrypted),
+      decipher.final(),
+    ]).toString(Unicode_Transformation_Format);
   }
 }
 
-const encryptionService = new encryption();
+const encryptionService = new Encryption();
 
-function encryptionInterceptor(req, res, next) {
+module.exports = function encryptionInterceptor(req, res, next) {
   try {
-    if (req.body?.data) {
-      req.body = JSON.parse(encryptionService.decrypt(req.body.data));
+    const encryptedData = req.body?.data;
+
+    if (encryptedData) {
+      req.body = JSON.parse(encryptionService.decrypt(encryptedData));
     }
 
     const originalJson = res.json.bind(res);
 
-    res.json = function (body) {
+    res.json = (body) => {
       const encrypted = encryptionService.encrypt(JSON.stringify(body));
 
       return originalJson({
@@ -68,12 +79,10 @@ function encryptionInterceptor(req, res, next) {
 
     next();
   } catch (err) {
-    console.error("Encryption error:", err);
+    console.error("Encryption error:", err.message);
 
     res.status(400).json({
       error: "Invalid encrypted data",
     });
   }
-}
-
-module.exports = encryptionInterceptor;
+};
