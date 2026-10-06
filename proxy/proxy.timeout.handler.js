@@ -1,20 +1,24 @@
 function sendGatewayTimeout(res) {
+  if (res.writableEnded || res.destroyed) return;
+
   if (!res.headersSent) res.writeHead(504);
-  if (!res.writableEnded) res.end("Gateway Timeout");
+  res.end("Gateway Timeout");
+}
+
+function handleTimeout(req, res) {
+  if (!req.destroyed) req.destroy();
+  sendGatewayTimeout(res);
 }
 
 function updateResponseTimeout(proxyRes, res, timeout) {
-  proxyRes.setTimeout(timeout, () => {
-    proxyRes.destroy();
-    sendGatewayTimeout(res);
-  });
+  proxyRes.setTimeout(timeout, () => handleTimeout(proxyRes, res));
 }
 
 function updateRequestTimeout(proxyReq, res, timeout) {
-  proxyReq.setTimeout(timeout, () => {
-    proxyReq.destroy();
-    sendGatewayTimeout(res);
-  });
+  proxyReq.setTimeout(timeout, () => handleTimeout(proxyReq, res));
 }
 
-module.exports = { updateResponseTimeout, updateRequestTimeout };
+module.exports = {
+  updateResponseTimeout,
+  updateRequestTimeout,
+};
