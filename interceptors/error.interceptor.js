@@ -1,5 +1,9 @@
 module.exports = function error(err, _req, res, _next) {
-  res
-    .status(err.status || 500)
-    .json({ message: err.message, status: false, statusCode: 500 });
+  const statusCode = err?.status >= 400 && err.status < 600 ? err.status : 500;
+
+  res.status(statusCode).json({
+    message: err?.message || "Internal Server Error",
+    status: false,
+    statusCode,
+  });
 };
