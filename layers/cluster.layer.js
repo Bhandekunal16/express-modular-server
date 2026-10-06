@@ -11,23 +11,35 @@ function isClusterShuttingDown() {
 }
 
 module.exports = function clustering() {
-  if (cluster.isPrimary) {
-    const numCPUs = os.cpus().length;
+  if (!cluster.isPrimary) return;
 
-    for (let cpu = 0; cpu < numCPUs; cpu++) {
-      cluster.fork();
+  const availableCPUs = os.availableParallelism
+    ? os.availableParallelism()
+    : os.cpus().length;
+
+  const configuredWorkers = Number.parseInt(process.env.WORKERS, 10);
+
+  const workerCount =
+    Number.isInteger(configuredWorkers) && configuredWorkers > 0
+      ? configuredWorkers
+      : availableCPUs;
+
+  for (let i = 0; i < workerCount; i++) {
+    cluster.fork();
+  }
+
+  cluster.on("exit", (worker) => {
+    const pid = worker.process.pid;
+
+    if (clusterShuttingDown) {
+      console.log(`Cluster primary: worker ${pid} exited`);
+      return;
     }
 
-    cluster.on("exit", (worker, _, __) => {
-      if (clusterShuttingDown) {
-        console.log(`Cluster primary: worker ${worker.process.pid} exited`);
-        return;
-      }
+    console.log(`Worker ${pid} died. Forking a replacement worker...`);
 
-      console.log(`Worker ${worker.process.pid} died. Forking a new worker...`);
-      cluster.fork();
-    });
-  }
+    cluster.fork();
+  });
 };
 
 module.exports.markClusterShuttingDown = markClusterShuttingDown;
