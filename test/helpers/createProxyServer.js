@@ -1,13 +1,13 @@
-const rateLimiter = require("./layers/rate.limiting.layer");
-const { isShuttingDown } = require("./layers/graceful.shutdown.layer");
-const proxyRequestAbortHandler = require("./proxy/proxy.request.abort.handler");
+const rateLimiter = require("../../layers/rate.limiting.layer");
+const { isShuttingDown } = require("../../layers/graceful.shutdown.layer");
+const proxyRequestAbortHandler = require("../../proxy/proxy.request.abort.handler");
 const {
   updateResponseTimeout,
   updateRequestTimeout,
-} = require("./proxy/proxy.timeout.handler");
-const sendBadGateway = require("./proxy/proxy.error.handler");
-const createProxyRequestTracker = require("./proxy/proxy.request.tracker");
-const { http } = require("./provider/dependency.map");
+} = require("../../proxy/proxy.timeout.handler");
+const sendBadGateway = require("../../proxy/proxy.error.handler");
+const createProxyRequestTracker = require("../../proxy/proxy.request.tracker");
+const { http } = require("../../provider/dependency.map");
 
 function upstreamHostname(host) {
   return host === "0.0.0.0" ? "127.0.0.1" : host;
