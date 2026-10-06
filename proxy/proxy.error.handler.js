@@ -1,6 +1,7 @@
 module.exports = function sendBadGateway(proxyReq, res) {
-  proxyReq.on("error", () => {
-    if (!res.headersSent) res.writeHead(502);
-    if (!res.writableEnded) res.end("Bad Gateway");
+  proxyReq.once("error", () => {
+    if (res.headersSent || res.writableEnded) return;
+    res.writeHead(502);
+    res.end("Bad Gateway");
   });
 };
