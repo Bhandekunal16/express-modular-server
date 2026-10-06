@@ -1,54 +1,53 @@
-const { WRITE_L0G, exclude } = require("../provider/config.map");
+const {
+  WRITE_L0G,
+  LOG_REQUESTS,
+  exclude,
+} = require("../provider/config.map");
+
 const append = require("../core/file.functions");
 
-module.exports = function logger(req, _, next) {
-  const {
-    method,
-    originalUrl,
-    url,
-    baseUrl,
-    path,
-    protocol,
-    hostname,
-    host,
-    ip,
-    ips,
-    params,
-    query,
-    body,
-    headers,
-  } = req;
+const hasExclusions = Array.isArray(exclude) && exclude.length > 0;
 
-  const resolvedRequestId =
-    req.requestId || req.headers["x-request-id"] || "N/A";
+module.exports = function logger(req, _res, next) {
+  if (!LOG_REQUESTS && !WRITE_L0G) {
+    next();
+    return;
+  }
 
-  let request = {
-    method,
-    originalUrl,
-    url,
-    baseUrl,
-    path,
-    params,
-    query,
-    protocol,
-    hostname,
-    host,
-    ip,
-    ips,
-    body,
-    headers,
-    requestId: resolvedRequestId,
+  const request = {
+    method: req.method,
+    url: req.originalUrl,
+    requestId: req.requestId || req.headers["x-request-id"] || "N/A",
+    ip: req.ip,
   };
 
-  if (exclude.length !== 0) {
+  if (req.params && Object.keys(req.params).length > 0) {
+    request.params = req.params;
+  }
+
+  if (req.query && Object.keys(req.query).length > 0) {
+    request.query = req.query;
+  }
+
+  if (req.body && Object.keys(req.body).length > 0) {
+    request.body = req.body;
+  }
+
+  if (hasExclusions) {
     for (const property of exclude) {
       delete request[property];
     }
   }
 
-  if (WRITE_L0G) append(JSON.stringify(request));
+  const output = JSON.stringify(request);
 
-  console.log(`request: ${JSON.stringify(request)}`);
+  if (WRITE_L0G) {
+    append(output);
+  }
+
+  if (LOG_REQUESTS) {
+    console.log(`request: ${output}`);
+  }
 
   next();
 };

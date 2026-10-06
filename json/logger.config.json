@@ -1,4 +1,5 @@
 {
   "exclude": ["params", "body"],
-  "WRITE_L0G": true
+  "WRITE_L0G": false,
+  "LOG_REQUESTS": true
 }
