@@ -22,34 +22,33 @@ const {
 
 if (clustering && cluster.isPrimary) {
   clusterInterceptor();
+
   registerClusterPrimaryShutdown({
     shutdownTimeout: SHUTDOWN_TIMEOUT,
     markClusterShuttingDown,
   });
 } else {
   const app = express();
+  const activeRequests = new Set();
 
   middleware(app);
 
-  const activeRequests = new Set();
-
-  app.use((_, res, next) => {
+  app.use((req, res, next) => {
     activeRequests.add(res);
 
-    const release = () => {
+    res.once("finish", () => {
       activeRequests.delete(res);
-    };
+    });
 
-    res.once("finish", release);
-    res.once("close", release);
+    res.once("close", () => {
+      activeRequests.delete(res);
+    });
 
     next();
   });
 
   app.get("/", (_, res) => {
-    res.json({
-      message: "hello world",
-    });
+    res.json({ message: "hello world" });
   });
 
   app.use((_, res) => {
@@ -65,7 +64,7 @@ if (clustering && cluster.isPrimary) {
   const serverName = clustering ? "Express worker" : "Express";
   const servers = replicate(app, host, port, REPLICA, replicas);
 
-  servers.forEach((server) => {
+  for (const server of servers) {
     gracefulShutdown({
       server,
       name: serverName,
@@ -75,10 +74,11 @@ if (clustering && cluster.isPrimary) {
         logByte.warn(`${serverName}: shutdown started`);
       },
     });
-  });
+  }
 
-  if (clustering)
+  if (clustering) {
     registerWorkerShutdownMessage(() => {
       triggerGracefulShutdown("shutdown");
     });
+  }
 }
